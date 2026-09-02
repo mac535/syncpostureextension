@@ -6,6 +6,9 @@ import {
   detectLandmarksForVideo,
   drawLandmarksOnCanvas
 } from '../lib/mediapipe/visionPipeline';
+import { computePostureMetrics, type PostureMetrics } from '../lib/posture/postureMetrics';
+import { classifyPosture, type PostureClassification } from '../lib/posture/postureClassifier';
+import { PostureMetricsSmoother } from '../lib/posture/smoother';
 import {
   Video,
   VideoOff,
@@ -15,9 +18,10 @@ import {
   Radio,
   Activity,
   Cpu,
-  Eye,
-  User,
-  Gauge
+  Gauge,
+  Compass,
+  Info,
+  Sliders
 } from 'lucide-react';
 
 export const Dashboard: React.FC = () => {
@@ -27,6 +31,7 @@ export const Dashboard: React.FC = () => {
   const isProcessingRef = useRef<boolean>(false);
   const lastTimestampRef = useRef<number>(0);
   const fpsTimerRef = useRef<{ frames: number; lastTime: number }>({ frames: 0, lastTime: performance.now() });
+  const smootherRef = useRef<PostureMetricsSmoother>(new PostureMetricsSmoother(0.35));
 
   // Camera & Pipeline States
   const [cameraActive, setCameraActive] = useState<boolean>(false);
@@ -37,10 +42,15 @@ export const Dashboard: React.FC = () => {
 
   // Live Detection Stats
   const [poseDetected, setPoseDetected] = useState<boolean>(false);
-  const [faceDetected, setFaceDetected] = useState<boolean>(false);
-  const [poseLandmarksCount, setPoseLandmarksCount] = useState<number>(0);
-  const [faceLandmarksCount, setFaceLandmarksCount] = useState<number>(0);
   const [measuredFps, setMeasuredFps] = useState<number>(0);
+
+  // Live Posture Metrics & Classification State
+  const [postureMetrics, setPostureMetrics] = useState<PostureMetrics | null>(null);
+  const [postureClassification, setPostureClassification] = useState<PostureClassification>({
+    status: 'insufficient_data',
+    severity: 0,
+    reason: 'Initializing vision pipeline...'
+  });
 
   // Broadcast Log State
   const [lastSentMessage, setLastSentMessage] = useState<string>('None yet');
@@ -123,7 +133,7 @@ export const Dashboard: React.FC = () => {
     };
   }, []);
 
-  // 3. Inference & Canvas Debug Render Loop
+  // 3. Inference, Math & Canvas Debug Render Loop
   useEffect(() => {
     if (!pipelineReady || !cameraActive) {
       return;
@@ -160,17 +170,29 @@ export const Dashboard: React.FC = () => {
             const poseLandmarks = results.poseResult?.landmarks?.[0];
             const faceLandmarks = results.faceResult?.faceLandmarks?.[0];
 
-            // Render landmark skeleton & mesh on debug canvas
+            // Render landmark skeleton on debug canvas
             drawLandmarksOnCanvas(ctx, canvas.width, canvas.height, poseLandmarks, faceLandmarks);
 
-            // Update status metrics
+            // Compute Posture Geometry & Classification
             const isPosePresent = Boolean(poseLandmarks && poseLandmarks.length > 0);
-            const isFacePresent = Boolean(faceLandmarks && faceLandmarks.length > 0);
-
             setPoseDetected(isPosePresent);
-            setFaceDetected(isFacePresent);
-            setPoseLandmarksCount(poseLandmarks?.length ?? 0);
-            setFaceLandmarksCount(faceLandmarks?.length ?? 0);
+
+            if (isPosePresent && poseLandmarks) {
+              const rawMetrics = computePostureMetrics(poseLandmarks);
+              const smoothedMetrics = smootherRef.current.smooth(rawMetrics);
+              const classification = classifyPosture(smoothedMetrics);
+
+              setPostureMetrics(smoothedMetrics);
+              setPostureClassification(classification);
+            } else {
+              smootherRef.current.reset();
+              setPostureMetrics(null);
+              setPostureClassification({
+                status: 'insufficient_data',
+                severity: 0,
+                reason: 'No person detected in camera frame'
+              });
+            }
           }
         }
 
@@ -225,7 +247,7 @@ export const Dashboard: React.FC = () => {
   };
 
   return (
-    <div style={{ maxWidth: '1200px', margin: '2rem auto', padding: '0 1.5rem' }}>
+    <div style={{ maxWidth: '1240px', margin: '2rem auto', padding: '0 1.5rem' }}>
       {/* Header bar */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
         <div>
@@ -269,171 +291,108 @@ export const Dashboard: React.FC = () => {
       </div>
 
       {/* Main 2-Column Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.45fr) minmax(0, 1fr)', gap: '2rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.35fr) minmax(0, 1fr)', gap: '2rem' }}>
         {/* Left Column: Live Webcam View with Canvas Landmark Overlay */}
-        <div className="glass-panel" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600 }}>
-              <Activity size={18} color="#60a5fa" />
-              <span>Live Vision Feed (Pose & Face Overlay)</span>
-            </div>
-            <span style={{ fontSize: '0.75rem', color: '#9ca3af' }}>100% on-device inference</span>
-          </div>
-
-          <div style={{
-            position: 'relative',
-            width: '100%',
-            backgroundColor: '#030712',
-            borderRadius: '0.75rem',
-            overflow: 'hidden',
-            aspectRatio: '16 / 9',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            border: '1px solid rgba(255, 255, 255, 0.08)'
-          }}>
-            {cameraError ? (
-              <div style={{ textAlign: 'center', padding: '1.5rem', color: '#f87171' }}>
-                <ShieldAlert size={36} style={{ margin: '0 auto 0.5rem' }} />
-                <p style={{ fontWeight: 600 }}>Camera Access Error</p>
-                <p style={{ fontSize: '0.8rem', color: '#9ca3af', marginTop: '0.25rem' }}>{cameraError}</p>
-              </div>
-            ) : pipelineError ? (
-              <div style={{ textAlign: 'center', padding: '1.5rem', color: '#f87171' }}>
-                <ShieldAlert size={36} style={{ margin: '0 auto 0.5rem' }} />
-                <p style={{ fontWeight: 600 }}>MediaPipe Loading Error</p>
-                <p style={{ fontSize: '0.8rem', color: '#9ca3af', marginTop: '0.25rem' }}>{pipelineError}</p>
-              </div>
-            ) : (
-              <>
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  style={{
-                    width: '100%',
-                    height: '100%',
-                    objectFit: 'cover',
-                    transform: 'scaleX(-1)' // Natural mirror feel
-                  }}
-                />
-                <canvas
-                  ref={canvasRef}
-                  style={{
-                    position: 'absolute',
-                    inset: 0,
-                    width: '100%',
-                    height: '100%',
-                    objectFit: 'cover',
-                    transform: 'scaleX(-1)', // Synchronized mirrored overlay
-                    pointerEvents: 'none'
-                  }}
-                />
-              </>
-            )}
-          </div>
-
-          <div style={{ marginTop: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#9ca3af', fontSize: '0.8rem' }}>
-            <CheckCircle2 size={15} color="#10b981" />
-            <span>Pose & Face Landmarkers operational in GPU video stream mode.</span>
-          </div>
-        </div>
-
-        {/* Right Column: Status Cards, Test Controls & Event Log */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-          {/* Real-time Status Card */}
-          <div className="glass-panel" style={{ padding: '1.5rem' }}>
-            <h3 style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <Gauge size={18} color="#60a5fa" /> Real-Time Vision Status
-            </h3>
-
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.75rem', marginBottom: '1rem' }}>
-              {/* Pose Status Box */}
-              <div style={{
-                padding: '0.75rem 1rem',
-                borderRadius: '0.5rem',
-                background: poseDetected ? 'rgba(16, 185, 129, 0.1)' : 'rgba(255, 255, 255, 0.03)',
-                border: `1px solid ${poseDetected ? 'rgba(16, 185, 129, 0.3)' : 'rgba(255, 255, 255, 0.06)'}`
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: '#9ca3af', fontSize: '0.75rem', marginBottom: '0.2rem' }}>
-                  <User size={13} /> Pose Landmarker
-                </div>
-                <div style={{ fontSize: '0.95rem', fontWeight: 600, color: poseDetected ? '#34d399' : '#9ca3af' }}>
-                  {poseDetected ? `DETECTED (${poseLandmarksCount} pts)` : 'NOT DETECTED'}
-                </div>
+          <div className="glass-panel" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600 }}>
+                <Activity size={18} color="#60a5fa" />
+                <span>Live Vision Feed (Pose Geometry Overlay)</span>
               </div>
-
-              {/* Face Status Box */}
-              <div style={{
-                padding: '0.75rem 1rem',
-                borderRadius: '0.5rem',
-                background: faceDetected ? 'rgba(16, 185, 129, 0.1)' : 'rgba(255, 255, 255, 0.03)',
-                border: `1px solid ${faceDetected ? 'rgba(16, 185, 129, 0.3)' : 'rgba(255, 255, 255, 0.06)'}`
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: '#9ca3af', fontSize: '0.75rem', marginBottom: '0.2rem' }}>
-                  <Eye size={13} /> Face Landmarker
-                </div>
-                <div style={{ fontSize: '0.95rem', fontWeight: 600, color: faceDetected ? '#34d399' : '#9ca3af' }}>
-                  {faceDetected ? `DETECTED (${faceLandmarksCount} pts)` : 'NOT DETECTED'}
-                </div>
-              </div>
+              <span style={{ fontSize: '0.75rem', color: '#9ca3af' }}>100% on-device inference</span>
             </div>
 
-            {/* Inference FPS & Ready Indicator */}
             <div style={{
+              position: 'relative',
+              width: '100%',
+              backgroundColor: '#030712',
+              borderRadius: '0.75rem',
+              overflow: 'hidden',
+              aspectRatio: '16 / 9',
               display: 'flex',
-              justifyContent: 'space-between',
               alignItems: 'center',
-              padding: '0.75rem 1rem',
-              borderRadius: '0.5rem',
-              background: 'rgba(0, 0, 0, 0.25)',
-              fontSize: '0.8rem',
-              border: '1px solid rgba(255, 255, 255, 0.05)'
+              justifyContent: 'center',
+              border: '1px solid rgba(255, 255, 255, 0.08)'
             }}>
-              <div>
-                <span style={{ color: '#9ca3af' }}>Inference Cadence: </span>
-                <strong style={{ color: '#60a5fa' }}>{measuredFps > 0 ? `~${measuredFps} FPS` : 'Measuring...'}</strong>
-              </div>
-              <div>
-                <span style={{ color: '#9ca3af' }}>Engine: </span>
-                <strong style={{ color: '#a78bfa' }}>MediaPipe WASM (GPU)</strong>
-              </div>
+              {cameraError ? (
+                <div style={{ textAlign: 'center', padding: '1.5rem', color: '#f87171' }}>
+                  <ShieldAlert size={36} style={{ margin: '0 auto 0.5rem' }} />
+                  <p style={{ fontWeight: 600 }}>Camera Access Error</p>
+                  <p style={{ fontSize: '0.8rem', color: '#9ca3af', marginTop: '0.25rem' }}>{cameraError}</p>
+                </div>
+              ) : pipelineError ? (
+                <div style={{ textAlign: 'center', padding: '1.5rem', color: '#f87171' }}>
+                  <ShieldAlert size={36} style={{ margin: '0 auto 0.5rem' }} />
+                  <p style={{ fontWeight: 600 }}>MediaPipe Loading Error</p>
+                  <p style={{ fontSize: '0.8rem', color: '#9ca3af', marginTop: '0.25rem' }}>{pipelineError}</p>
+                </div>
+              ) : (
+                <>
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      objectFit: 'cover',
+                      transform: 'scaleX(-1)' // Natural mirror feel
+                    }}
+                  />
+                  <canvas
+                    ref={canvasRef}
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      width: '100%',
+                      height: '100%',
+                      objectFit: 'cover',
+                      transform: 'scaleX(-1)', // Synchronized mirrored overlay
+                      pointerEvents: 'none'
+                    }}
+                  />
+                </>
+              )}
+            </div>
+
+            <div style={{ marginTop: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#9ca3af', fontSize: '0.8rem' }}>
+              <CheckCircle2 size={15} color="#10b981" />
+              <span>Pose geometry engine operational (~{measuredFps} FPS).</span>
             </div>
           </div>
 
-          {/* Signal Control Box */}
+          {/* Cross-Tab Signal Controls */}
           <div className="glass-panel" style={{ padding: '1.5rem' }}>
-            <h3 style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <h3 style={{ fontSize: '1.05rem', fontWeight: 600, marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <Radio size={18} color="#818cf8" /> Cross-Tab Test Controls
             </h3>
             <p style={{ fontSize: '0.85rem', color: '#9ca3af', marginBottom: '1.25rem', lineHeight: 1.4 }}>
               Broadcast test signals to any open <code style={{ color: '#e5e7eb' }}>/demo</code> tab to verify instant intervention reactions.
             </p>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
               <button
                 id="btn-send-test-signal"
                 className="btn btn-danger"
                 onClick={handleSendTestSignal}
-                style={{ width: '100%' }}
               >
-                <Send size={16} /> Send Test Signal (Slouching Severity 2)
+                <Send size={16} /> Send Test (Slouching 2)
               </button>
 
               <button
                 id="btn-clear-intervention"
                 className="btn btn-secondary"
                 onClick={handleSendClear}
-                style={{ width: '100%' }}
               >
                 <CheckCircle2 size={16} color="#10b981" /> Clear Intervention
               </button>
             </div>
 
             <div style={{
-              marginTop: '1.25rem',
-              padding: '0.75rem',
+              marginTop: '1rem',
+              padding: '0.65rem 0.85rem',
               borderRadius: '0.5rem',
               background: 'rgba(0, 0, 0, 0.25)',
               fontSize: '0.8rem',
@@ -443,18 +402,229 @@ export const Dashboard: React.FC = () => {
               <span style={{ color: '#60a5fa', fontWeight: 500 }}>{lastSentMessage}</span>
             </div>
           </div>
+        </div>
+
+        {/* Right Column: Real-Time Posture Analytics, Classifier & Visibility Debug */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          {/* Posture Classification Status Card */}
+          <div className="glass-panel" style={{ padding: '1.5rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+              <h3 style={{ fontSize: '1.1rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Gauge size={18} color="#60a5fa" /> Posture Intelligence
+              </h3>
+              <span style={{
+                padding: '0.2rem 0.65rem',
+                borderRadius: '0.4rem',
+                fontSize: '0.75rem',
+                fontWeight: 700,
+                textTransform: 'uppercase',
+                background:
+                  postureClassification.status === 'good' ? 'rgba(16, 185, 129, 0.2)' :
+                  postureClassification.status === 'insufficient_data' ? 'rgba(156, 163, 175, 0.2)' :
+                  'rgba(244, 63, 94, 0.2)',
+                color:
+                  postureClassification.status === 'good' ? '#34d399' :
+                  postureClassification.status === 'insufficient_data' ? '#9ca3af' :
+                  '#fb7185',
+                border: `1px solid ${
+                  postureClassification.status === 'good' ? 'rgba(16, 185, 129, 0.4)' :
+                  postureClassification.status === 'insufficient_data' ? 'rgba(156, 163, 175, 0.3)' :
+                  'rgba(244, 63, 94, 0.4)'
+                }`
+              }}>
+                {postureClassification.status.replace('_', ' ')} (Sev {postureClassification.severity})
+              </span>
+            </div>
+
+            {/* Diagnostic Reason */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: '0.5rem',
+              padding: '0.75rem 1rem',
+              borderRadius: '0.5rem',
+              background: 'rgba(0, 0, 0, 0.25)',
+              fontSize: '0.85rem',
+              color: '#d1d5db',
+              marginBottom: '1.25rem',
+              border: '1px solid rgba(255, 255, 255, 0.05)'
+            }}>
+              <Info size={16} color="#60a5fa" style={{ flexShrink: 0, marginTop: '2px' }} />
+              <div>
+                <span style={{ fontWeight: 600, color: '#f3f4f6' }}>Diagnosis: </span>
+                {postureClassification.reason}
+              </div>
+            </div>
+
+            {/* Live Metrics Grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.75rem' }}>
+              {/* Lateral Tilt */}
+              <div style={{
+                padding: '0.75rem',
+                borderRadius: '0.5rem',
+                background: (postureMetrics?.lateralTiltDeg ?? 0) >= 6 ? 'rgba(244, 63, 94, 0.1)' : 'rgba(255, 255, 255, 0.03)',
+                border: `1px solid ${(postureMetrics?.lateralTiltDeg ?? 0) >= 6 ? 'rgba(244, 63, 94, 0.25)' : 'rgba(255, 255, 255, 0.06)'}`
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: '#9ca3af', fontSize: '0.75rem', marginBottom: '0.25rem' }}>
+                  <span>Lateral Torso Tilt</span>
+                  <Compass size={12} />
+                </div>
+                <div style={{ fontSize: '1.1rem', fontWeight: 700, color: (postureMetrics?.lateralTiltDeg ?? 0) >= 6 ? '#fb7185' : '#f3f4f6' }}>
+                  {postureMetrics?.lateralTiltDeg !== null && postureMetrics?.lateralTiltDeg !== undefined
+                    ? `${postureMetrics.lateralTiltDeg}°`
+                    : '—'}
+                  {postureMetrics?.leanDirection !== 'neutral' && postureMetrics?.lateralTiltDeg !== null ? (
+                    <span style={{ fontSize: '0.75rem', color: '#9ca3af', marginLeft: '6px' }}>({postureMetrics?.leanDirection})</span>
+                  ) : null}
+                </div>
+              </div>
+
+              {/* Shoulder Tilt */}
+              <div style={{
+                padding: '0.75rem',
+                borderRadius: '0.5rem',
+                background: (postureMetrics?.shoulderTiltDeg ?? 0) >= 5 ? 'rgba(244, 63, 94, 0.1)' : 'rgba(255, 255, 255, 0.03)',
+                border: `1px solid ${(postureMetrics?.shoulderTiltDeg ?? 0) >= 5 ? 'rgba(244, 63, 94, 0.25)' : 'rgba(255, 255, 255, 0.06)'}`
+              }}>
+                <div style={{ color: '#9ca3af', fontSize: '0.75rem', marginBottom: '0.25rem' }}>
+                  Shoulder Asymmetry
+                </div>
+                <div style={{ fontSize: '1.1rem', fontWeight: 700, color: (postureMetrics?.shoulderTiltDeg ?? 0) >= 5 ? '#fb7185' : '#f3f4f6' }}>
+                  {postureMetrics?.shoulderTiltDeg !== null && postureMetrics?.shoulderTiltDeg !== undefined
+                    ? `${postureMetrics.shoulderTiltDeg}°`
+                    : '—'}
+                </div>
+              </div>
+
+              {/* Head Forward Offset */}
+              <div style={{
+                padding: '0.75rem',
+                borderRadius: '0.5rem',
+                background: (postureMetrics?.headForwardOffset ?? 0) >= 0.16 ? 'rgba(244, 63, 94, 0.1)' : 'rgba(255, 255, 255, 0.03)',
+                border: `1px solid ${(postureMetrics?.headForwardOffset ?? 0) >= 0.16 ? 'rgba(244, 63, 94, 0.25)' : 'rgba(255, 255, 255, 0.06)'}`
+              }}>
+                <div style={{ color: '#9ca3af', fontSize: '0.75rem', marginBottom: '0.25rem' }}>
+                  Head Forward Offset
+                </div>
+                <div style={{ fontSize: '1.1rem', fontWeight: 700, color: (postureMetrics?.headForwardOffset ?? 0) >= 0.16 ? '#fb7185' : '#f3f4f6' }}>
+                  {postureMetrics?.headForwardOffset !== null && postureMetrics?.headForwardOffset !== undefined
+                    ? postureMetrics.headForwardOffset
+                    : '—'}
+                </div>
+              </div>
+
+              {/* Head Torso Angle */}
+              <div style={{
+                padding: '0.75rem',
+                borderRadius: '0.5rem',
+                background: (postureMetrics?.headTorsoAngleDeg ?? 0) >= 18 ? 'rgba(244, 63, 94, 0.1)' : 'rgba(255, 255, 255, 0.03)',
+                border: `1px solid ${(postureMetrics?.headTorsoAngleDeg ?? 0) >= 18 ? 'rgba(244, 63, 94, 0.25)' : 'rgba(255, 255, 255, 0.06)'}`
+              }}>
+                <div style={{ color: '#9ca3af', fontSize: '0.75rem', marginBottom: '0.25rem' }}>
+                  Head-Torso Angle
+                </div>
+                <div style={{ fontSize: '1.1rem', fontWeight: 700, color: (postureMetrics?.headTorsoAngleDeg ?? 0) >= 18 ? '#fb7185' : '#f3f4f6' }}>
+                  {postureMetrics?.headTorsoAngleDeg !== null && postureMetrics?.headTorsoAngleDeg !== undefined
+                    ? `${postureMetrics.headTorsoAngleDeg}°`
+                    : '—'}
+                </div>
+              </div>
+            </div>
+
+            {/* Confidence & Landmark Health Bar */}
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginTop: '1rem',
+              padding: '0.65rem 0.85rem',
+              borderRadius: '0.5rem',
+              background: 'rgba(0, 0, 0, 0.2)',
+              fontSize: '0.8rem',
+              border: '1px solid rgba(255, 255, 255, 0.05)'
+            }}>
+              <div>
+                <span style={{ color: '#9ca3af' }}>Confidence: </span>
+                <strong style={{ color: (postureMetrics?.confidence ?? 0) > 0.4 ? '#34d399' : '#fbbf24' }}>
+                  {postureMetrics ? `${Math.round(postureMetrics.confidence * 100)}%` : '0%'}
+                </strong>
+              </div>
+              <div>
+                <span style={{ color: '#9ca3af' }}>Pose State: </span>
+                <strong style={{ color: poseDetected ? '#34d399' : '#9ca3af' }}>
+                  {poseDetected ? '33 Landmarks' : 'Not in frame'}
+                </strong>
+              </div>
+            </div>
+          </div>
+
+          {/* Developer Landmark Visibility Debug Table */}
+          <div className="glass-panel" style={{ padding: '1.25rem' }}>
+            <h4 style={{ fontSize: '0.85rem', fontWeight: 600, color: '#9ca3af', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <Sliders size={14} color="#60a5fa" /> Landmark Visibility Tracker (Debug)
+            </h4>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.5rem', fontSize: '0.75rem' }}>
+              <div style={{ background: 'rgba(0,0,0,0.2)', padding: '0.4rem 0.6rem', borderRadius: '0.35rem' }}>
+                <div style={{ color: '#9ca3af' }}>Nose</div>
+                <strong style={{ color: (postureMetrics?.visibilityDebug.nose ?? 0) > 0.3 ? '#34d399' : '#fb7185' }}>
+                  {postureMetrics?.visibilityDebug.nose ?? 'N/A'}
+                </strong>
+              </div>
+              <div style={{ background: 'rgba(0,0,0,0.2)', padding: '0.4rem 0.6rem', borderRadius: '0.35rem' }}>
+                <div style={{ color: '#9ca3af' }}>L. Ear</div>
+                <strong style={{ color: (postureMetrics?.visibilityDebug.leftEar ?? 0) > 0.3 ? '#34d399' : '#fb7185' }}>
+                  {postureMetrics?.visibilityDebug.leftEar ?? 'N/A'}
+                </strong>
+              </div>
+              <div style={{ background: 'rgba(0,0,0,0.2)', padding: '0.4rem 0.6rem', borderRadius: '0.35rem' }}>
+                <div style={{ color: '#9ca3af' }}>R. Ear</div>
+                <strong style={{ color: (postureMetrics?.visibilityDebug.rightEar ?? 0) > 0.3 ? '#34d399' : '#fb7185' }}>
+                  {postureMetrics?.visibilityDebug.rightEar ?? 'N/A'}
+                </strong>
+              </div>
+              <div style={{ background: 'rgba(0,0,0,0.2)', padding: '0.4rem 0.6rem', borderRadius: '0.35rem' }}>
+                <div style={{ color: '#9ca3af' }}>L. Shoulder</div>
+                <strong style={{ color: (postureMetrics?.visibilityDebug.leftShoulder ?? 0) > 0.3 ? '#34d399' : '#fb7185' }}>
+                  {postureMetrics?.visibilityDebug.leftShoulder ?? 'N/A'}
+                </strong>
+              </div>
+              <div style={{ background: 'rgba(0,0,0,0.2)', padding: '0.4rem 0.6rem', borderRadius: '0.35rem' }}>
+                <div style={{ color: '#9ca3af' }}>R. Shoulder</div>
+                <strong style={{ color: (postureMetrics?.visibilityDebug.rightShoulder ?? 0) > 0.3 ? '#34d399' : '#fb7185' }}>
+                  {postureMetrics?.visibilityDebug.rightShoulder ?? 'N/A'}
+                </strong>
+              </div>
+              <div style={{ background: 'rgba(0,0,0,0.2)', padding: '0.4rem 0.6rem', borderRadius: '0.35rem' }}>
+                <div style={{ color: '#9ca3af' }}>L. Hip</div>
+                <strong style={{ color: (postureMetrics?.visibilityDebug.leftHip ?? 0) > 0.3 ? '#34d399' : '#fb7185' }}>
+                  {postureMetrics?.visibilityDebug.leftHip ?? 'N/A'}
+                </strong>
+              </div>
+              <div style={{ background: 'rgba(0,0,0,0.2)', padding: '0.4rem 0.6rem', borderRadius: '0.35rem' }}>
+                <div style={{ color: '#9ca3af' }}>R. Hip</div>
+                <strong style={{ color: (postureMetrics?.visibilityDebug.rightHip ?? 0) > 0.3 ? '#34d399' : '#fb7185' }}>
+                  {postureMetrics?.visibilityDebug.rightHip ?? 'N/A'}
+                </strong>
+              </div>
+              <div style={{ background: 'rgba(0,0,0,0.2)', padding: '0.4rem 0.6rem', borderRadius: '0.35rem' }}>
+                <div style={{ color: '#9ca3af' }}>Confidence</div>
+                <strong style={{ color: '#60a5fa' }}>
+                  {postureMetrics?.confidence ?? '0.00'}
+                </strong>
+              </div>
+            </div>
+          </div>
 
           {/* Activity / Event Log */}
-          <div className="glass-panel" style={{ padding: '1.5rem', flex: 1, display: 'flex', flexDirection: 'column' }}>
-            <h3 style={{ fontSize: '0.95rem', fontWeight: 600, marginBottom: '0.75rem', color: '#9ca3af' }}>
+          <div className="glass-panel" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column' }}>
+            <h3 style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem', color: '#9ca3af' }}>
               Channel Activity
             </h3>
             <div style={{
-              flex: 1,
-              minHeight: '100px',
+              minHeight: '75px',
               backgroundColor: 'rgba(0, 0, 0, 0.3)',
               borderRadius: '0.5rem',
-              padding: '0.75rem',
+              padding: '0.65rem',
               fontSize: '0.75rem',
               fontFamily: 'monospace',
               overflowY: 'auto',
@@ -462,10 +632,10 @@ export const Dashboard: React.FC = () => {
               color: '#d1d5db'
             }}>
               {receivedMessages.length === 0 ? (
-                <div style={{ color: '#6b7280', fontStyle: 'italic' }}>Waiting for channel events (e.g., /demo tab ready)...</div>
+                <div style={{ color: '#6b7280', fontStyle: 'italic' }}>Waiting for channel events...</div>
               ) : (
                 receivedMessages.map((msg, idx) => (
-                  <div key={idx} style={{ marginBottom: '0.35rem', wordBreak: 'break-all' }}>
+                  <div key={idx} style={{ marginBottom: '0.25rem', wordBreak: 'break-all' }}>
                     {msg}
                   </div>
                 ))
