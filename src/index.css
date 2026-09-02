@@ -1,0 +1,1137 @@
+:root {
+  /* Quiet Place Palette */
+  --qp-sage: #DCEBE4;
+  --qp-mint: #EAF3EE;
+  --qp-cream: #F8F3E8;
+  --qp-cream-light: #FCFAF5;
+  --qp-forest: #173B35;
+  --qp-forest-muted: #365B51;
+  --qp-green-muted: #78958B;
+  --qp-coral: #E96F67;
+  --qp-coral-hover: #DC5E56;
+  --qp-coral-soft: #F4A09A;
+  --qp-sand: #EFE8D8;
+  --qp-border: rgba(23, 59, 53, 0.1);
+  --qp-border-light: rgba(23, 59, 53, 0.06);
+
+  /* Spacing rhythm */
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-80: 80px;
+  --space-96: 96px;
+  --space-120: 120px;
+
+  /* Typography */
+  --font-serif: Georgia, 'Times New Roman', Cambria, serif;
+  --font-sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+
+  /* Dashboard / App Shell Variables */
+  --bg-primary: #0b0f19;
+  --bg-secondary: #111827;
+  --bg-card: rgba(17, 24, 39, 0.75);
+  --bg-card-border: rgba(255, 255, 255, 0.08);
+  --text-main: #f3f4f6;
+  --text-muted: #9ca3af;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--bg-primary);
+  color: var(--text-main);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* ==========================================================
+   QUIET PLACE FOUNDATION & LAYOUT SYSTEM (/demo)
+   ========================================================== */
+
+.qp-page {
+  background-color: var(--qp-cream-light);
+  color: var(--qp-forest);
+  font-family: var(--font-sans);
+  min-height: 100vh;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.qp-container {
+  width: 100%;
+  max-width: 1240px;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: var(--space-24);
+  padding-right: var(--space-24);
+}
+
+@media (min-width: 1024px) {
+  .qp-container {
+    padding-left: var(--space-32);
+    padding-right: var(--space-32);
+  }
+}
+
+/* Typography styles for Quiet Place */
+.qp-serif {
+  font-family: var(--font-serif);
+}
+
+.qp-heading-1 {
+  font-family: var(--font-serif);
+  font-size: 2.75rem;
+  line-height: 1.15;
+  font-weight: 400;
+  color: var(--qp-forest);
+  letter-spacing: -0.01em;
+}
+
+.qp-heading-2 {
+  font-family: var(--font-serif);
+  font-size: 2rem;
+  line-height: 1.25;
+  font-weight: 400;
+  color: var(--qp-forest);
+}
+
+.qp-heading-3 {
+  font-family: var(--font-serif);
+  font-size: 1.4rem;
+  line-height: 1.35;
+  font-weight: 400;
+  color: var(--qp-forest);
+}
+
+.qp-body {
+  font-family: var(--font-sans);
+  font-size: 1rem;
+  line-height: 1.65;
+  color: var(--qp-forest-muted);
+}
+
+.qp-body-sm {
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--qp-forest-muted);
+}
+
+/* ==========================================================
+   QUIET PLACE HEADER & NAVIGATION
+   ========================================================== */
+
+.qp-header-wrapper {
+  background-color: var(--qp-cream-light);
+  border-bottom: 1px solid var(--qp-border-light);
+  position: sticky;
+  top: 0;
+  z-index: 30;
+}
+
+.qp-header-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 80px;
+}
+
+/* Logo */
+.qp-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  cursor: pointer;
+  user-select: none;
+}
+
+.qp-brand-mark {
+  width: 34px;
+  height: 34px;
+  background-color: var(--qp-sage);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--qp-forest);
+  transition: transform 0.25s ease, background-color 0.25s ease;
+}
+
+.qp-brand:hover .qp-brand-mark {
+  transform: rotate(8deg);
+  background-color: var(--qp-mint);
+}
+
+.qp-brand-text {
+  font-family: var(--font-serif);
+  font-size: 1.35rem;
+  font-weight: 400;
+  color: var(--qp-forest);
+  letter-spacing: -0.01em;
+}
+
+/* Main Navigation */
+.qp-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-32);
+}
+
+.qp-nav-link {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--qp-forest-muted);
+  position: relative;
+  padding: 6px 0;
+  transition: color 200ms ease;
+}
+
+.qp-nav-link::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 0%;
+  height: 1.5px;
+  background-color: var(--qp-forest);
+  transition: width 200ms ease;
+}
+
+.qp-nav-link:hover {
+  color: var(--qp-forest);
+}
+
+.qp-nav-link:hover::after {
+  width: 100%;
+}
+
+/* Header Right Actions */
+.qp-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-24);
+}
+
+.qp-icon-btn {
+  background: none;
+  border: none;
+  color: var(--qp-forest-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  transition: all 200ms ease;
+}
+
+.qp-icon-btn:hover {
+  color: var(--qp-forest);
+  background-color: var(--qp-sage);
+}
+
+.qp-signin-btn {
+  background: none;
+  border: none;
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--qp-forest);
+  cursor: pointer;
+  padding: 6px var(--space-8);
+  transition: color 200ms ease;
+}
+
+.qp-signin-btn:hover {
+  color: var(--qp-forest-muted);
+}
+
+/* Primary Coral CTA Button */
+.qp-cta-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  background-color: var(--qp-coral);
+  color: #ffffff;
+  padding: 10px var(--space-24);
+  border-radius: 9999px;
+  font-size: 0.925rem;
+  font-weight: 500;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(233, 111, 103, 0.25);
+  transition: transform 200ms ease, background-color 200ms ease, box-shadow 200ms ease;
+}
+
+.qp-cta-btn:hover {
+  background-color: var(--qp-coral-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(233, 111, 103, 0.35);
+}
+
+.qp-cta-btn:active {
+  transform: translateY(0);
+}
+
+/* Mobile Nav Toggle */
+.qp-mobile-toggle {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--qp-forest);
+  cursor: pointer;
+  padding: var(--space-8);
+  border-radius: 6px;
+}
+
+@media (max-width: 860px) {
+  .qp-nav {
+    display: none;
+  }
+  .qp-signin-btn {
+    display: none;
+  }
+  .qp-mobile-toggle {
+    display: flex;
+  }
+  .qp-header-inner {
+    height: 70px;
+  }
+}
+
+@media (max-width: 540px) {
+  .qp-cta-btn {
+    padding: 8px var(--space-16);
+    font-size: 0.85rem;
+  }
+}
+
+/* Mobile dropdown menu */
+.qp-mobile-menu {
+  display: flex;
+  flex-direction: column;
+  background-color: var(--qp-cream-light);
+  border-bottom: 1px solid var(--qp-border);
+  padding: var(--space-16) var(--space-24) var(--space-24);
+  gap: var(--space-16);
+}
+
+.qp-mobile-menu .qp-nav-link {
+  font-size: 1.05rem;
+  padding: var(--space-8) 0;
+  border-bottom: 1px solid var(--qp-border-light);
+}
+
+/* ==========================================================
+   QUIET PLACE HERO SECTION
+   ========================================================== */
+
+.qp-hero-section {
+  padding-top: var(--space-64);
+  padding-bottom: var(--space-64);
+  background-color: var(--qp-cream-light);
+}
+
+.qp-eyebrow {
+  display: inline-block;
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--qp-green-muted);
+  margin-bottom: var(--space-16);
+}
+
+.qp-hero-title {
+  font-family: var(--font-serif);
+  font-size: clamp(2.4rem, 4.2vw, 3.75rem);
+  line-height: 1.15;
+  font-weight: 400;
+  color: var(--qp-forest);
+  letter-spacing: -0.02em;
+  margin-bottom: var(--space-24);
+}
+
+.qp-hero-desc {
+  font-family: var(--font-sans);
+  font-size: clamp(1rem, 1.3vw, 1.15rem);
+  line-height: 1.65;
+  color: var(--qp-forest-muted);
+  max-width: 580px;
+  margin: 0 auto var(--space-32);
+}
+
+.qp-hero-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-16);
+  margin-bottom: var(--space-48);
+  flex-wrap: wrap;
+}
+
+.qp-hero-secondary-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 24px;
+  border-radius: 9999px;
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--qp-forest);
+  background-color: transparent;
+  border: 1px solid var(--qp-border);
+  cursor: pointer;
+  transition: all 200ms ease;
+}
+
+.qp-hero-secondary-btn:hover {
+  background-color: var(--qp-sand);
+  border-color: rgba(23, 59, 53, 0.2);
+  color: var(--qp-forest);
+}
+
+.qp-hero-landscape-wrapper {
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  border-radius: 24px;
+  overflow: hidden;
+  box-shadow: 0 16px 36px -10px rgba(23, 59, 53, 0.12), 0 0 0 1px rgba(23, 59, 53, 0.05);
+}
+
+.qp-landscape-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* ==========================================================
+   QUIET PLACE FEATURES / PHILOSOPHY SECTION
+   ========================================================== */
+
+.qp-features-section {
+  padding-top: var(--space-80);
+  padding-bottom: var(--space-96);
+  background-color: var(--qp-cream-light);
+}
+
+.qp-features-header {
+  text-align: center;
+  max-width: 680px;
+  margin: 0 auto var(--space-64);
+}
+
+.qp-features-title {
+  font-family: var(--font-serif);
+  font-size: clamp(2rem, 3.2vw, 2.75rem);
+  line-height: 1.2;
+  font-weight: 400;
+  color: var(--qp-forest);
+  margin-bottom: var(--space-16);
+  letter-spacing: -0.01em;
+}
+
+.qp-features-subtitle {
+  font-family: var(--font-sans);
+  font-size: 1.05rem;
+  line-height: 1.65;
+  color: var(--qp-forest-muted);
+}
+
+.qp-features-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-24);
+}
+
+@media (max-width: 960px) {
+  .qp-features-grid {
+    grid-template-columns: 1fr;
+    gap: var(--space-24);
+  }
+}
+
+.qp-feature-card {
+  padding: var(--space-32) var(--space-32) var(--space-48);
+  border-radius: 20px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 280px;
+  border: 1px solid var(--qp-border);
+  transition: transform 250ms ease, box-shadow 250ms ease, border-color 250ms ease;
+  position: relative;
+  cursor: pointer;
+}
+
+.qp-feature-card-cream {
+  background-color: var(--qp-cream);
+}
+
+.qp-feature-card-mint {
+  background-color: var(--qp-mint);
+}
+
+.qp-feature-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 24px -6px rgba(23, 59, 53, 0.08);
+  border-color: rgba(23, 59, 53, 0.2);
+}
+
+.qp-feature-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-32);
+}
+
+.qp-feature-number {
+  font-family: var(--font-serif);
+  font-size: 1.15rem;
+  color: var(--qp-green-muted);
+  font-weight: 400;
+}
+
+.qp-feature-icon-box {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background-color: var(--qp-sage);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--qp-forest);
+  transition: background-color 200ms ease, transform 200ms ease;
+}
+
+.qp-feature-card:hover .qp-feature-icon-box {
+  background-color: #ffffff;
+  transform: scale(1.05);
+}
+
+.qp-feature-card-title {
+  font-family: var(--font-serif);
+  font-size: 1.45rem;
+  font-weight: 400;
+  color: var(--qp-forest);
+  margin-bottom: var(--space-12);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: color 200ms ease;
+}
+
+.qp-feature-card:hover .qp-feature-card-title {
+  color: var(--qp-coral);
+}
+
+.qp-feature-arrow {
+  color: var(--qp-green-muted);
+  opacity: 0.6;
+  transform: translate(0, 0);
+  transition: all 200ms ease;
+}
+
+.qp-feature-card:hover .qp-feature-arrow {
+  opacity: 1;
+  color: var(--qp-coral);
+  transform: translate(2px, -2px);
+}
+
+.qp-feature-card-desc {
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: var(--qp-forest-muted);
+}
+
+/* ==========================================================
+   QUIET PLACE DISCOVERY SECTION
+   ========================================================== */
+
+.qp-discovery-section {
+  padding-top: var(--space-80);
+  padding-bottom: var(--space-96);
+  background-color: var(--qp-cream);
+}
+
+.qp-discovery-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-bottom: var(--space-48);
+  flex-wrap: wrap;
+  gap: var(--space-24);
+}
+
+.qp-view-all-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--qp-forest);
+  padding: 6px 0;
+  transition: color 200ms ease, transform 200ms ease;
+}
+
+.qp-view-all-link:hover {
+  color: var(--qp-coral);
+  transform: translateX(3px);
+}
+
+.qp-discovery-grid {
+  display: grid;
+  grid-template-columns: 1.15fr 0.85fr;
+  grid-template-rows: auto auto;
+  gap: var(--space-24);
+}
+
+.qp-discovery-subgrid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-24);
+}
+
+.qp-place-card {
+  background-color: var(--qp-cream-light);
+  border: 1px solid var(--qp-border);
+  border-radius: 18px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: transform 250ms ease, box-shadow 250ms ease, border-color 250ms ease;
+  cursor: pointer;
+}
+
+.qp-place-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 28px -8px rgba(23, 59, 53, 0.08);
+  border-color: rgba(23, 59, 53, 0.2);
+}
+
+.qp-place-img-box {
+  width: 100%;
+  overflow: hidden;
+  background-color: var(--qp-mint);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.qp-card-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  transition: transform 350ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.qp-place-card:hover .qp-card-svg {
+  transform: scale(1.02);
+}
+
+.qp-place-meta {
+  padding: var(--space-24) var(--space-24) var(--space-32);
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.qp-place-category {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--qp-green-muted);
+  text-transform: uppercase;
+  margin-bottom: var(--space-8);
+}
+
+.qp-place-title {
+  font-family: var(--font-serif);
+  font-size: 1.35rem;
+  font-weight: 400;
+  color: var(--qp-forest);
+  margin-bottom: var(--space-8);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: color 200ms ease;
+}
+
+.qp-place-card:hover .qp-place-title {
+  color: var(--qp-coral);
+}
+
+.qp-place-arrow {
+  color: var(--qp-green-muted);
+  opacity: 0.6;
+  transition: all 200ms ease;
+}
+
+.qp-place-card:hover .qp-place-arrow {
+  opacity: 1;
+  color: var(--qp-coral);
+  transform: translate(2px, -2px);
+}
+
+.qp-place-desc {
+  font-size: 0.925rem;
+  line-height: 1.55;
+  color: var(--qp-forest-muted);
+}
+
+.qp-place-wide {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 900px) {
+  .qp-discovery-grid {
+    grid-template-columns: 1fr;
+  }
+  .qp-place-wide {
+    grid-column: auto;
+  }
+}
+
+/* ==========================================================
+   QUIET PLACE JOURNAL SECTION
+   ========================================================== */
+
+.qp-journal-section {
+  padding-top: var(--space-80);
+  padding-bottom: var(--space-96);
+  background-color: var(--qp-mint);
+}
+
+.qp-journal-header {
+  margin-bottom: var(--space-48);
+}
+
+.qp-journal-grid {
+  display: grid;
+  grid-template-columns: 1.15fr 0.85fr;
+  gap: var(--space-32);
+}
+
+@media (max-width: 960px) {
+  .qp-journal-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.qp-journal-card {
+  background-color: var(--qp-cream-light);
+  border: 1px solid var(--qp-border);
+  border-radius: 18px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: transform 250ms ease, box-shadow 250ms ease, border-color 250ms ease;
+  cursor: pointer;
+}
+
+.qp-journal-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 14px 28px -8px rgba(23, 59, 53, 0.08);
+  border-color: rgba(23, 59, 53, 0.2);
+}
+
+.qp-journal-featured-art {
+  width: 100%;
+  overflow: hidden;
+  background-color: var(--qp-sand);
+}
+
+.qp-journal-card:hover .qp-journal-featured-art svg {
+  transform: scale(1.02);
+}
+
+.qp-journal-side-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-24);
+}
+
+.qp-journal-content {
+  padding: var(--space-32);
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.qp-journal-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-16);
+  margin-bottom: var(--space-12);
+}
+
+.qp-journal-cat {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--qp-green-muted);
+  text-transform: uppercase;
+}
+
+.qp-journal-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.8rem;
+  color: var(--qp-forest-muted);
+}
+
+.qp-journal-title {
+  font-family: var(--font-serif);
+  font-size: 1.35rem;
+  line-height: 1.35;
+  font-weight: 400;
+  color: var(--qp-forest);
+  margin-bottom: var(--space-12);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-12);
+  transition: color 200ms ease;
+}
+
+.qp-journal-featured-title {
+  font-size: 1.7rem;
+}
+
+.qp-journal-card:hover .qp-journal-title {
+  color: var(--qp-coral);
+}
+
+.qp-journal-arrow {
+  color: var(--qp-green-muted);
+  opacity: 0.6;
+  flex-shrink: 0;
+  margin-top: 4px;
+  transition: all 200ms ease;
+}
+
+.qp-journal-card:hover .qp-journal-arrow {
+  opacity: 1;
+  color: var(--qp-coral);
+  transform: translate(2px, -2px);
+}
+
+.qp-journal-excerpt {
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: var(--qp-forest-muted);
+}
+
+/* ==========================================================
+   QUIET PLACE FINAL CTA SECTION
+   ========================================================== */
+
+.qp-cta-section {
+  padding-top: var(--space-48);
+  padding-bottom: var(--space-80);
+  background-color: var(--qp-mint);
+}
+
+.qp-cta-box {
+  background-color: var(--qp-forest);
+  border-radius: 24px;
+  position: relative;
+  overflow: hidden;
+  padding: var(--space-80) var(--space-32);
+  text-align: center;
+  box-shadow: 0 20px 40px -12px rgba(23, 59, 53, 0.25);
+}
+
+.qp-cta-decor {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  width: 100%;
+  height: 100%;
+}
+
+.qp-cta-inner {
+  position: relative;
+  z-index: 2;
+  max-width: 620px;
+  margin: 0 auto;
+}
+
+.qp-cta-title {
+  font-family: var(--font-serif);
+  font-size: clamp(2rem, 3.5vw, 2.75rem);
+  line-height: 1.2;
+  font-weight: 400;
+  color: #FCFAF5;
+  letter-spacing: -0.01em;
+  margin-bottom: var(--space-16);
+}
+
+.qp-cta-desc {
+  font-family: var(--font-sans);
+  font-size: 1.1rem;
+  line-height: 1.6;
+  color: var(--qp-sage);
+  margin-bottom: var(--space-32);
+}
+
+.qp-cta-btn-large {
+  padding: 13px 32px;
+  font-size: 1rem;
+}
+
+/* ==========================================================
+   QUIET PLACE FOOTER SECTION
+   ========================================================== */
+
+.qp-footer-wrapper {
+  background-color: var(--qp-cream-light);
+  border-top: 1px solid var(--qp-border);
+  padding-top: var(--space-64);
+  padding-bottom: var(--space-48);
+}
+
+.qp-footer-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-48);
+  margin-bottom: var(--space-48);
+  flex-wrap: wrap;
+}
+
+.qp-footer-brand-col {
+  max-width: 380px;
+}
+
+.qp-footer-tagline {
+  font-size: 0.925rem;
+  line-height: 1.6;
+  color: var(--qp-forest-muted);
+}
+
+.qp-footer-links-grid {
+  display: flex;
+  gap: var(--space-64);
+}
+
+@media (max-width: 640px) {
+  .qp-footer-links-grid {
+    gap: var(--space-32);
+  }
+}
+
+.qp-footer-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+.qp-footer-col-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--qp-forest);
+  margin-bottom: var(--space-4);
+}
+
+.qp-footer-link {
+  font-size: 0.925rem;
+  color: var(--qp-forest-muted);
+  transition: color 150ms ease;
+}
+
+.qp-footer-link:hover {
+  color: var(--qp-forest);
+}
+
+.qp-footer-bottom {
+  border-top: 1px solid var(--qp-border-light);
+  padding-top: var(--space-24);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-16);
+}
+
+.qp-footer-copy {
+  font-size: 0.85rem;
+  color: var(--qp-green-muted);
+}
+
+.qp-footer-meta-pill {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--qp-green-muted);
+  background-color: var(--qp-sand);
+  padding: 4px 10px;
+  border-radius: 9999px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ==========================================================
+   DEGRADATION & BLUR INTERVENTION STYLING
+   ========================================================== */
+
+.demo-content-wrapper {
+  transition: filter 0.6s cubic-bezier(0.16, 1, 0.3, 1), transform 0.6s ease;
+  position: relative;
+  flex: 1;
+}
+
+.demo-content-wrapper.blurred {
+  filter: blur(14px) brightness(0.7) saturate(0.8);
+  pointer-events: none;
+  user-select: none;
+}
+
+.intervention-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle, transparent 40%, rgba(233, 111, 103, 0.35) 100%);
+  animation: pulse-vignette 2.4s infinite alternate ease-in-out;
+}
+
+@keyframes pulse-vignette {
+  0% {
+    background: radial-gradient(circle, transparent 45%, rgba(233, 111, 103, 0.2) 100%);
+  }
+  100% {
+    background: radial-gradient(circle, transparent 35%, rgba(233, 111, 103, 0.45) 100%);
+  }
+}
+
+/* ==========================================================
+   APP SHELL / DASHBOARD STYLING
+   ========================================================== */
+
+.glass-panel {
+  background: var(--bg-card);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--bg-card-border);
+  border-radius: 1rem;
+  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+}
+
+.top-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 2rem;
+  border-bottom: 1px solid var(--bg-card-border);
+  background: rgba(11, 15, 25, 0.85);
+  backdrop-filter: blur(10px);
+  position: sticky;
+  top: 0;
+  z-index: 40;
+}
+
+.brand-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-weight: 700;
+  font-size: 1.25rem;
+  background: linear-gradient(135deg, #60a5fa, #a78bfa);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.nav-link {
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  transition: all 0.2s ease;
+}
+
+.nav-link:hover, .nav-link.active {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.65rem 1.25rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  border-radius: 0.6rem;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #3b82f6, #6366f1);
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
+}
+
+.btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.6);
+}
+
+.btn-danger {
+  background: linear-gradient(135deg, #f43f5e, #e11d48);
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(244, 63, 94, 0.4);
+}
+
+.btn-danger:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(244, 63, 94, 0.6);
+}
+
+.btn-secondary {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-main);
+  border: 1px solid var(--bg-card-border);
+}
+
+.btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
