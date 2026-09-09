@@ -1,0 +1,4483 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+public/
+  favicon.svg
+  icons.svg
+src/
+  components/
+    Discovery.tsx
+    Features.tsx
+    FinalCTA.tsx
+    Footer.tsx
+    Header.tsx
+    Hero.tsx
+    Journal.tsx
+  lib/
+    mediapipe/
+      visionPipeline.ts
+    posture/
+      geometry.ts
+      postureClassifier.ts
+      postureMetrics.ts
+      smoother.ts
+    channel.ts
+  pages/
+    Dashboard.tsx
+    Demo.tsx
+    Home.tsx
+  types/
+    messages.ts
+  App.tsx
+  index.css
+  main.tsx
+.gitignore
+.oxlintrc.json
+index.html
+package.json
+README.md
+tsconfig.app.json
+tsconfig.json
+tsconfig.node.json
+vite.config.ts
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="public/favicon.svg">
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="46" fill="none" viewBox="0 0 48 46"><path fill="#863bff" d="M25.946 44.938c-.664.845-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.287c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.497 0-3.578-1.842-3.578H1.237c-.92 0-1.456-1.04-.92-1.788L10.013.474c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.579 1.842 3.579h11.377c.943 0 1.473 1.088.89 1.83L25.947 44.94z" style="fill:#863bff;fill:color(display-p3 .5252 .23 1);fill-opacity:1"/><mask id="a" width="48" height="46" x="0" y="0" maskUnits="userSpaceOnUse" style="mask-type:alpha"><path fill="#000" d="M25.842 44.938c-.664.844-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.183c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.498 0-3.579-1.842-3.579H1.133c-.92 0-1.456-1.04-.92-1.787L9.91.473c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.578 1.842 3.578h11.377c.943 0 1.473 1.088.89 1.832L25.843 44.94z" style="fill:#000;fill-opacity:1"/></mask><g mask="url(#a)"><g filter="url(#b)"><ellipse cx="5.508" cy="14.704" fill="#ede6ff" rx="5.508" ry="14.704" style="fill:#ede6ff;fill:color(display-p3 .9275 .9033 1);fill-opacity:1" transform="matrix(.00324 1 1 -.00324 -4.47 31.516)"/></g><g filter="url(#c)"><ellipse cx="10.399" cy="29.851" fill="#ede6ff" rx="10.399" ry="29.851" style="fill:#ede6ff;fill:color(display-p3 .9275 .9033 1);fill-opacity:1" transform="matrix(.00324 1 1 -.00324 -39.328 7.883)"/></g><g filter="url(#d)"><ellipse cx="5.508" cy="30.487" fill="#7e14ff" rx="5.508" ry="30.487" style="fill:#7e14ff;fill:color(display-p3 .4922 .0767 1);fill-opacity:1" transform="rotate(89.814 -25.913 -14.639)scale(1 -1)"/></g><g filter="url(#e)"><ellipse cx="5.508" cy="30.599" fill="#7e14ff" rx="5.508" ry="30.599" style="fill:#7e14ff;fill:color(display-p3 .4922 .0767 1);fill-opacity:1" transform="rotate(89.814 -32.644 -3.334)scale(1 -1)"/></g><g filter="url(#f)"><ellipse cx="5.508" cy="30.599" fill="#7e14ff" rx="5.508" ry="30.599" style="fill:#7e14ff;fill:color(display-p3 .4922 .0767 1);fill-opacity:1" transform="matrix(.00324 1 1 -.00324 -34.34 30.47)"/></g><g filter="url(#g)"><ellipse cx="14.072" cy="22.078" fill="#ede6ff" rx="14.072" ry="22.078" style="fill:#ede6ff;fill:color(display-p3 .9275 .9033 1);fill-opacity:1" transform="rotate(93.35 24.506 48.493)scale(-1 1)"/></g><g filter="url(#h)"><ellipse cx="3.47" cy="21.501" fill="#7e14ff" rx="3.47" ry="21.501" style="fill:#7e14ff;fill:color(display-p3 .4922 .0767 1);fill-opacity:1" transform="rotate(89.009 28.708 47.59)scale(-1 1)"/></g><g filter="url(#i)"><ellipse cx="3.47" cy="21.501" fill="#7e14ff" rx="3.47" ry="21.501" style="fill:#7e14ff;fill:color(display-p3 .4922 .0767 1);fill-opacity:1" transform="rotate(89.009 28.708 47.59)scale(-1 1)"/></g><g filter="url(#j)"><ellipse cx=".387" cy="8.972" fill="#7e14ff" rx="4.407" ry="29.108" style="fill:#7e14ff;fill:color(display-p3 .4922 .0767 1);fill-opacity:1" transform="rotate(39.51 .387 8.972)"/></g><g filter="url(#k)"><ellipse cx="47.523" cy="-6.092" fill="#7e14ff" rx="4.407" ry="29.108" style="fill:#7e14ff;fill:color(display-p3 .4922 .0767 1);fill-opacity:1" transform="rotate(37.892 47.523 -6.092)"/></g><g filter="url(#l)"><ellipse cx="41.412" cy="6.333" fill="#47bfff" rx="5.971" ry="9.665" style="fill:#47bfff;fill:color(display-p3 .2799 .748 1);fill-opacity:1" transform="rotate(37.892 41.412 6.333)"/></g><g filter="url(#m)"><ellipse cx="-1.879" cy="38.332" fill="#7e14ff" rx="4.407" ry="29.108" style="fill:#7e14ff;fill:color(display-p3 .4922 .0767 1);fill-opacity:1" transform="rotate(37.892 -1.88 38.332)"/></g><g filter="url(#n)"><ellipse cx="-1.879" cy="38.332" fill="#7e14ff" rx="4.407" ry="29.108" style="fill:#7e14ff;fill:color(display-p3 .4922 .0767 1);fill-opacity:1" transform="rotate(37.892 -1.88 38.332)"/></g><g filter="url(#o)"><ellipse cx="35.651" cy="29.907" fill="#7e14ff" rx="4.407" ry="29.108" style="fill:#7e14ff;fill:color(display-p3 .4922 .0767 1);fill-opacity:1" transform="rotate(37.892 35.651 29.907)"/></g><g filter="url(#p)"><ellipse cx="38.418" cy="32.4" fill="#47bfff" rx="5.971" ry="15.297" style="fill:#47bfff;fill:color(display-p3 .2799 .748 1);fill-opacity:1" transform="rotate(37.892 38.418 32.4)"/></g></g><defs><filter id="b" width="60.045" height="41.654" x="-19.77" y="16.149" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="7.659"/></filter><filter id="c" width="90.34" height="51.437" x="-54.613" y="-7.533" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="7.659"/></filter><filter id="d" width="79.355" height="29.4" x="-49.64" y="2.03" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="e" width="79.579" height="29.4" x="-45.045" y="20.029" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="f" width="79.579" height="29.4" x="-43.513" y="21.178" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="g" width="74.749" height="58.852" x="15.756" y="-17.901" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="7.659"/></filter><filter id="h" width="61.377" height="25.362" x="23.548" y="2.284" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="i" width="61.377" height="25.362" x="23.548" y="2.284" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="j" width="56.045" height="63.649" x="-27.636" y="-22.853" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="k" width="54.814" height="64.646" x="20.116" y="-38.415" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="l" width="33.541" height="35.313" x="24.641" y="-11.323" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="m" width="54.814" height="64.646" x="-29.286" y="6.009" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="n" width="54.814" height="64.646" x="-29.286" y="6.009" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="o" width="54.814" height="64.646" x="8.244" y="-2.416" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="p" width="39.409" height="43.623" x="18.713" y="10.588" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter></defs></svg>
+</file>
+
+<file path="public/icons.svg">
+<svg xmlns="http://www.w3.org/2000/svg">
+  <symbol id="bluesky-icon" viewBox="0 0 16 17">
+    <g clip-path="url(#bluesky-clip)"><path fill="#08060d" d="M7.75 7.735c-.693-1.348-2.58-3.86-4.334-5.097-1.68-1.187-2.32-.981-2.74-.79C.188 2.065.1 2.812.1 3.251s.241 3.602.398 4.13c.52 1.744 2.367 2.333 4.07 2.145-2.495.37-4.71 1.278-1.805 4.512 3.196 3.309 4.38-.71 4.987-2.746.608 2.036 1.307 5.91 4.93 2.746 2.72-2.746.747-4.143-1.747-4.512 1.702.189 3.55-.4 4.07-2.145.156-.528.397-3.691.397-4.13s-.088-1.186-.575-1.406c-.42-.19-1.06-.395-2.741.79-1.755 1.24-3.64 3.752-4.334 5.099"/></g>
+    <defs><clipPath id="bluesky-clip"><path fill="#fff" d="M.1.85h15.3v15.3H.1z"/></clipPath></defs>
+  </symbol>
+  <symbol id="discord-icon" viewBox="0 0 20 19">
+    <path fill="#08060d" d="M16.224 3.768a14.5 14.5 0 0 0-3.67-1.153c-.158.286-.343.67-.47.976a13.5 13.5 0 0 0-4.067 0c-.128-.306-.317-.69-.476-.976A14.4 14.4 0 0 0 3.868 3.77C1.546 7.28.916 10.703 1.231 14.077a14.7 14.7 0 0 0 4.5 2.306q.545-.748.965-1.587a9.5 9.5 0 0 1-1.518-.74q.191-.14.372-.293c2.927 1.369 6.107 1.369 8.999 0q.183.152.372.294-.723.437-1.52.74.418.838.963 1.588a14.6 14.6 0 0 0 4.504-2.308c.37-3.911-.63-7.302-2.644-10.309m-9.13 8.234c-.878 0-1.599-.82-1.599-1.82 0-.998.705-1.82 1.6-1.82.894 0 1.614.82 1.599 1.82.001 1-.705 1.82-1.6 1.82m5.91 0c-.878 0-1.599-.82-1.599-1.82 0-.998.705-1.82 1.6-1.82.893 0 1.614.82 1.599 1.82 0 1-.706 1.82-1.6 1.82"/>
+  </symbol>
+  <symbol id="documentation-icon" viewBox="0 0 21 20">
+    <path fill="none" stroke="#aa3bff" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.35" d="m15.5 13.333 1.533 1.322c.645.555.967.833.967 1.178s-.322.623-.967 1.179L15.5 18.333m-3.333-5-1.534 1.322c-.644.555-.966.833-.966 1.178s.322.623.966 1.179l1.534 1.321"/>
+    <path fill="none" stroke="#aa3bff" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.35" d="M17.167 10.836v-4.32c0-1.41 0-2.117-.224-2.68-.359-.906-1.118-1.621-2.08-1.96-.599-.21-1.349-.21-2.848-.21-2.623 0-3.935 0-4.983.369-1.684.591-3.013 1.842-3.641 3.428C3 6.449 3 7.684 3 10.154v2.122c0 2.558 0 3.838.706 4.726q.306.383.713.671c.76.536 1.79.64 3.581.66"/>
+    <path fill="none" stroke="#aa3bff" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.35" d="M3 10a2.78 2.78 0 0 1 2.778-2.778c.555 0 1.209.097 1.748-.047.48-.129.854-.503.982-.982.145-.54.048-1.194.048-1.749a2.78 2.78 0 0 1 2.777-2.777"/>
+  </symbol>
+  <symbol id="github-icon" viewBox="0 0 19 19">
+    <path fill="#08060d" fill-rule="evenodd" d="M9.356 1.85C5.05 1.85 1.57 5.356 1.57 9.694a7.84 7.84 0 0 0 5.324 7.44c.387.079.528-.168.528-.376 0-.182-.013-.805-.013-1.454-2.165.467-2.616-.935-2.616-.935-.349-.91-.864-1.143-.864-1.143-.71-.48.051-.48.051-.48.787.051 1.2.805 1.2.805.695 1.194 1.817.857 2.268.649.064-.507.27-.857.49-1.052-1.728-.182-3.545-.857-3.545-3.87 0-.857.31-1.558.8-2.104-.078-.195-.349-1 .077-2.078 0 0 .657-.208 2.14.805a7.5 7.5 0 0 1 1.946-.26c.657 0 1.328.092 1.946.26 1.483-1.013 2.14-.805 2.14-.805.426 1.078.155 1.883.078 2.078.502.546.799 1.247.799 2.104 0 3.013-1.818 3.675-3.558 3.87.284.247.528.714.528 1.454 0 1.052-.012 1.896-.012 2.156 0 .208.142.455.528.377a7.84 7.84 0 0 0 5.324-7.441c.013-4.338-3.48-7.844-7.773-7.844" clip-rule="evenodd"/>
+  </symbol>
+  <symbol id="social-icon" viewBox="0 0 20 20">
+    <path fill="none" stroke="#aa3bff" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.35" d="M12.5 6.667a4.167 4.167 0 1 0-8.334 0 4.167 4.167 0 0 0 8.334 0"/>
+    <path fill="none" stroke="#aa3bff" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.35" d="M2.5 16.667a5.833 5.833 0 0 1 8.75-5.053m3.837.474.513 1.035c.07.144.257.282.414.309l.93.155c.596.1.736.536.307.965l-.723.73a.64.64 0 0 0-.152.531l.207.903c.164.715-.213.991-.84.618l-.872-.52a.63.63 0 0 0-.577 0l-.872.52c-.624.373-1.003.094-.84-.618l.207-.903a.64.64 0 0 0-.152-.532l-.723-.729c-.426-.43-.289-.864.306-.964l.93-.156a.64.64 0 0 0 .412-.31l.513-1.034c.28-.562.735-.562 1.012 0"/>
+  </symbol>
+  <symbol id="x-icon" viewBox="0 0 19 19">
+    <path fill="#08060d" fill-rule="evenodd" d="M1.893 1.98c.052.072 1.245 1.769 2.653 3.77l2.892 4.114c.183.261.333.48.333.486s-.068.089-.152.183l-.522.593-.765.867-3.597 4.087c-.375.426-.734.834-.798.905a1 1 0 0 0-.118.148c0 .01.236.017.664.017h.663l.729-.83c.4-.457.796-.906.879-.999a692 692 0 0 0 1.794-2.038c.034-.037.301-.34.594-.675l.551-.624.345-.392a7 7 0 0 1 .34-.374c.006 0 .93 1.306 2.052 2.903l2.084 2.965.045.063h2.275c1.87 0 2.273-.003 2.266-.021-.008-.02-1.098-1.572-3.894-5.547-2.013-2.862-2.28-3.246-2.273-3.266.008-.019.282-.332 2.085-2.38l2-2.274 1.567-1.782c.022-.028-.016-.03-.65-.03h-.674l-.3.342a871 871 0 0 1-1.782 2.025c-.067.075-.405.458-.75.852a100 100 0 0 1-.803.91c-.148.172-.299.344-.99 1.127-.304.343-.32.358-.345.327-.015-.019-.904-1.282-1.976-2.808L6.365 1.85H1.8zm1.782.91 8.078 11.294c.772 1.08 1.413 1.973 1.425 1.984.016.017.241.02 1.05.017l1.03-.004-2.694-3.766L7.796 5.75 5.722 2.852l-1.039-.004-1.039-.004z" clip-rule="evenodd"/>
+  </symbol>
+</svg>
+</file>
+
+<file path="src/components/Discovery.tsx">
+import React from 'react';
+import { ArrowRight, ArrowUpRight } from 'lucide-react';
+
+interface PlaceItem {
+  id: string;
+  category: 'NATURE' | 'SLOW LIVING' | 'CREATIVE' | 'REFLECTION';
+  title: string;
+  description: string;
+  layoutClass: string;
+  renderIllustration: () => React.ReactNode;
+}
+
+export const Discovery: React.FC = () => {
+  const places: PlaceItem[] = [
+    {
+      id: 'forest-morning',
+      category: 'NATURE',
+      title: 'Forest Morning',
+      description: 'A quiet start surrounded by trees, birdsong, and cool air.',
+      layoutClass: 'qp-place-featured',
+      renderIllustration: () => (
+        <svg viewBox="0 0 540 320" className="qp-card-svg" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="forestSky" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#EAF3EE" />
+              <stop offset="100%" stopColor="#DCEBE4" />
+            </linearGradient>
+            <linearGradient id="forestRidge" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#365B51" />
+              <stop offset="100%" stopColor="#173B35" />
+            </linearGradient>
+          </defs>
+          <rect width="540" height="320" fill="url(#forestSky)" />
+          {/* Distant misty trees & birds */}
+          <circle cx="420" cy="80" r="32" fill="#F8F3E8" opacity="0.8" />
+          <path d="M120 70 q10 -8 20 0 q10 -8 20 0" stroke="#78958B" strokeWidth="1.5" fill="none" />
+          <path d="M160 55 q8 -6 16 0 q8 -6 16 0" stroke="#78958B" strokeWidth="1.2" fill="none" opacity="0.7" />
+          
+          <path d="M0 200 Q 140 160 280 190 T 540 170 L 540 320 L 0 320 Z" fill="#78958B" opacity="0.4" />
+          <path d="M0 230 Q 180 190 360 220 T 540 210 L 540 320 L 0 320 Z" fill="#5B8276" opacity="0.7" />
+          <path d="M0 260 Q 240 220 480 250 L 540 260 L 540 320 L 0 320 Z" fill="url(#forestRidge)" />
+          {/* Stylized Pines & Flora */}
+          <polygon points="120,170 95,240 145,240" fill="#173B35" />
+          <polygon points="120,140 100,200 140,200" fill="#1D4740" />
+          <polygon points="190,190 170,250 210,250" fill="#173B35" />
+          <polygon points="380,180 355,260 405,260" fill="#173B35" />
+          <polygon points="380,150 362,210 398,210" fill="#224E46" />
+          {/* Subtle Wildflower Sparkle */}
+          <circle cx="280" cy="285" r="3" fill="#E96F67" />
+          <circle cx="295" cy="290" r="2" fill="#F4A09A" />
+          <circle cx="160" cy="295" r="3" fill="#E96F67" />
+        </svg>
+      )
+    },
+    {
+      id: 'rainy-afternoon',
+      category: 'SLOW LIVING',
+      title: 'Rainy Afternoon',
+      description: 'A slower afternoon with a book, a warm drink, and nowhere else to be.',
+      layoutClass: 'qp-place-standard',
+      renderIllustration: () => (
+        <svg viewBox="0 0 380 240" className="qp-card-svg" xmlns="http://www.w3.org/2000/svg">
+          <rect width="380" height="240" fill="#DCEBE4" />
+          {/* Window Frame with Rain Slants */}
+          <rect x="40" y="30" width="300" height="150" rx="8" fill="#EAF3EE" />
+          <line x1="190" y1="30" x2="190" y2="180" stroke="#B3CBC3" strokeWidth="3" />
+          <line x1="40" y1="105" x2="340" y2="105" stroke="#B3CBC3" strokeWidth="3" />
+          {/* Gentle rain streaks */}
+          <line x1="70" y1="45" x2="60" y2="75" stroke="#78958B" strokeWidth="1.5" strokeLinecap="round" opacity="0.6" />
+          <line x1="120" y1="65" x2="110" y2="95" stroke="#78958B" strokeWidth="1.5" strokeLinecap="round" opacity="0.6" />
+          <line x1="230" y1="45" x2="220" y2="75" stroke="#78958B" strokeWidth="1.5" strokeLinecap="round" opacity="0.6" />
+          <line x1="280" y1="80" x2="270" y2="110" stroke="#78958B" strokeWidth="1.5" strokeLinecap="round" opacity="0.6" />
+          {/* Warm cup with steam on windowsill */}
+          <rect x="0" y="180" width="380" height="60" fill="#F8F3E8" />
+          <rect x="150" y="165" width="40" height="30" rx="4" fill="#E96F67" />
+          <path d="M190 172 c6 0 10 4 10 9 s-4 9 -10 9" stroke="#E96F67" strokeWidth="2.5" fill="none" />
+          <path d="M165 155 q-3 -6 0 -12" stroke="#78958B" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+          <path d="M175 152 q-3 -6 0 -12" stroke="#78958B" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+        </svg>
+      )
+    },
+    {
+      id: 'creative-evening',
+      category: 'CREATIVE',
+      title: 'Creative Evening',
+      description: 'A space to write, sketch, make something, or simply begin.',
+      layoutClass: 'qp-place-standard',
+      renderIllustration: () => (
+        <svg viewBox="0 0 380 240" className="qp-card-svg" xmlns="http://www.w3.org/2000/svg">
+          <rect width="380" height="240" fill="#F8F3E8" />
+          {/* Warm evening room & desk glow */}
+          <circle cx="280" cy="70" r="60" fill="#FCFAF5" opacity="0.9" />
+          <circle cx="280" cy="70" r="30" fill="#F4A09A" opacity="0.3" />
+          {/* Desk Lamp */}
+          <path d="M280 40 L 250 80 L 310 80 Z" fill="#365B51" />
+          <line x1="280" y1="80" x2="280" y2="150" stroke="#173B35" strokeWidth="3" strokeLinecap="round" />
+          <ellipse cx="280" cy="150" rx="18" ry="5" fill="#173B35" />
+          {/* Wooden desk surface */}
+          <rect x="0" y="150" width="380" height="90" fill="#EFE8D8" />
+          {/* Open Notebook & Pen */}
+          <rect x="70" y="165" width="90" height="55" rx="3" fill="#FCFAF5" stroke="#78958B" strokeWidth="1.5" />
+          <line x1="115" y1="165" x2="115" y2="220" stroke="#B3CBC3" strokeWidth="1.5" />
+          <line x1="80" y1="180" x2="105" y2="180" stroke="#B3CBC3" strokeWidth="1" />
+          <line x1="80" y1="192" x2="105" y2="192" stroke="#B3CBC3" strokeWidth="1" />
+          <line x1="125" y1="180" x2="150" y2="180" stroke="#B3CBC3" strokeWidth="1" />
+          <line x1="125" y1="192" x2="145" y2="192" stroke="#B3CBC3" strokeWidth="1" />
+          {/* Ceramic plant pot */}
+          <path d="M190 175 L 195 205 L 215 205 L 220 175 Z" fill="#E96F67" />
+          <path d="M205 175 Q 200 155 190 150 Q 205 160 205 175" stroke="#173B35" strokeWidth="2" fill="none" />
+          <path d="M205 175 Q 215 152 225 155 Q 215 165 205 175" stroke="#365B51" strokeWidth="2" fill="none" />
+        </svg>
+      )
+    },
+    {
+      id: 'by-the-water',
+      category: 'REFLECTION',
+      title: 'By the Water',
+      description: 'Let the noise settle for a while.',
+      layoutClass: 'qp-place-wide',
+      renderIllustration: () => (
+        <svg viewBox="0 0 1180 260" className="qp-card-svg" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="waterSky" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#F8F3E8" />
+              <stop offset="60%" stopColor="#EAF3EE" />
+              <stop offset="100%" stopColor="#DCEBE4" />
+            </linearGradient>
+            <linearGradient id="lakeWater" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#5B8276" />
+              <stop offset="100%" stopColor="#173B35" />
+            </linearGradient>
+          </defs>
+          <rect width="1180" height="260" fill="url(#waterSky)" />
+          {/* Distant soft hills */}
+          <path d="M0 130 Q 300 70 600 110 T 1180 90 L 1180 260 L 0 260 Z" fill="#8DAFA4" opacity="0.6" />
+          <path d="M0 150 Q 240 100 520 135 T 1180 120 L 1180 260 L 0 260 Z" fill="#365B51" opacity="0.8" />
+          {/* Gentle Lake Surface */}
+          <rect y="165" width="1180" height="95" fill="url(#lakeWater)" />
+          {/* Water Ripples */}
+          <line x1="200" y1="185" x2="380" y2="185" stroke="#DCEBE4" strokeWidth="1.5" strokeLinecap="round" opacity="0.5" />
+          <line x1="600" y1="195" x2="840" y2="195" stroke="#DCEBE4" strokeWidth="1.5" strokeLinecap="round" opacity="0.5" />
+          <line x1="320" y1="215" x2="520" y2="215" stroke="#DCEBE4" strokeWidth="1.2" strokeLinecap="round" opacity="0.4" />
+          <line x1="820" y1="225" x2="980" y2="225" stroke="#DCEBE4" strokeWidth="1.2" strokeLinecap="round" opacity="0.4" />
+          {/* Small wooden dock pier */}
+          <polygon points="120,260 150,190 190,190 220,260" fill="#EFE8D8" stroke="#173B35" strokeWidth="1.5" />
+        </svg>
+      )
+    }
+  ];
+
+  return (
+    <section className="qp-discovery-section" id="explore">
+      <div className="qp-container">
+        {/* Section Header */}
+        <div className="qp-discovery-header">
+          <div>
+            <h2 className="qp-heading-2">
+              Places worth slowing down for.
+            </h2>
+            <p className="qp-body" style={{ marginTop: 'var(--space-8)' }}>
+              Little worlds for the moments when you need to step away, breathe, and reset.
+            </p>
+          </div>
+          <a href="#view-all" className="qp-view-all-link">
+            <span>View all</span>
+            <ArrowRight size={15} strokeWidth={2} />
+          </a>
+        </div>
+
+        {/* Editorial Asymmetric Grid */}
+        <div className="qp-discovery-grid">
+          {/* 1. Large Featured: Forest Morning (Top Left) */}
+          <div className="qp-place-card qp-place-forest">
+            <div className="qp-place-img-box">
+              {places[0].renderIllustration()}
+            </div>
+            <div className="qp-place-meta">
+              <span className="qp-place-category">{places[0].category}</span>
+              <h3 className="qp-place-title">
+                <span>{places[0].title}</span>
+                <ArrowUpRight className="qp-place-arrow" size={18} />
+              </h3>
+              <p className="qp-place-desc">{places[0].description}</p>
+            </div>
+          </div>
+
+          {/* Right Column Stack: Rainy Afternoon & Creative Evening */}
+          <div className="qp-discovery-subgrid">
+            {/* 2. Rainy Afternoon */}
+            <div className="qp-place-card qp-place-standard">
+              <div className="qp-place-img-box">
+                {places[1].renderIllustration()}
+              </div>
+              <div className="qp-place-meta">
+                <span className="qp-place-category">{places[1].category}</span>
+                <h3 className="qp-place-title">
+                  <span>{places[1].title}</span>
+                  <ArrowUpRight className="qp-place-arrow" size={18} />
+                </h3>
+                <p className="qp-place-desc">{places[1].description}</p>
+              </div>
+            </div>
+
+            {/* 3. Creative Evening */}
+            <div className="qp-place-card qp-place-standard">
+              <div className="qp-place-img-box">
+                {places[2].renderIllustration()}
+              </div>
+              <div className="qp-place-meta">
+                <span className="qp-place-category">{places[2].category}</span>
+                <h3 className="qp-place-title">
+                  <span>{places[2].title}</span>
+                  <ArrowUpRight className="qp-place-arrow" size={18} />
+                </h3>
+                <p className="qp-place-desc">{places[2].description}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* 4. Wide Bottom Span: By the Water */}
+          <div className="qp-place-card qp-place-wide">
+            <div className="qp-place-img-box">
+              {places[3].renderIllustration()}
+            </div>
+            <div className="qp-place-meta">
+              <span className="qp-place-category">{places[3].category}</span>
+              <h3 className="qp-place-title">
+                <span>{places[3].title}</span>
+                <ArrowUpRight className="qp-place-arrow" size={18} />
+              </h3>
+              <p className="qp-place-desc">{places[3].description}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+};
+</file>
+
+<file path="src/components/Features.tsx">
+import React from 'react';
+import { BookOpen, Compass, Bell, ArrowUpRight } from 'lucide-react';
+
+interface FeatureItem {
+  number: string;
+  title: string;
+  description: string;
+  icon: React.ReactNode;
+  bgClass: string;
+}
+
+const FEATURES: FeatureItem[] = [
+  {
+    number: '01',
+    title: 'Mindful Tools',
+    description: 'Simple journals, prompts, and exercises designed to help you pause and reflect.',
+    icon: <BookOpen size={22} strokeWidth={1.75} />,
+    bgClass: 'qp-feature-card-cream'
+  },
+  {
+    number: '02',
+    title: 'Creative Spaces',
+    description: 'Room to write, sketch, read, or simply let your thoughts wander.',
+    icon: <Compass size={22} strokeWidth={1.75} />,
+    bgClass: 'qp-feature-card-mint'
+  },
+  {
+    number: '03',
+    title: 'Gentle Reminders',
+    description: 'Small invitations to slow down before the day moves on without you.',
+    icon: <Bell size={22} strokeWidth={1.75} />,
+    bgClass: 'qp-feature-card-cream'
+  }
+];
+
+export const Features: React.FC = () => {
+  return (
+    <section className="qp-features-section" id="how-it-works">
+      <div className="qp-container">
+        {/* Section Header */}
+        <div className="qp-features-header">
+          <h2 className="qp-features-title">
+            Take a little time for yourself.
+          </h2>
+          <p className="qp-features-subtitle">
+            Quiet moments don&rsquo;t need to be complicated. A few intentional minutes can change the way the rest of your day feels.
+          </p>
+        </div>
+
+        {/* 3-Column Editorial Grid */}
+        <div className="qp-features-grid">
+          {FEATURES.map((item) => (
+            <div key={item.number} className={`qp-feature-card ${item.bgClass}`}>
+              <div className="qp-feature-top">
+                <span className="qp-feature-number">{item.number}</span>
+                <div className="qp-feature-icon-box">
+                  {item.icon}
+                </div>
+              </div>
+
+              <div className="qp-feature-content">
+                <h3 className="qp-feature-card-title">
+                  <span>{item.title}</span>
+                  <ArrowUpRight className="qp-feature-arrow" size={18} strokeWidth={2} />
+                </h3>
+                <p className="qp-feature-card-desc">
+                  {item.description}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+};
+</file>
+
+<file path="src/components/FinalCTA.tsx">
+import React from 'react';
+import { ArrowRight } from 'lucide-react';
+
+export const FinalCTA: React.FC = () => {
+  return (
+    <section className="qp-cta-section" id="find-quiet">
+      <div className="qp-container">
+        <div className="qp-cta-box">
+          {/* Subtle celestial / organic starry vector accents */}
+          <div className="qp-cta-decor" aria-hidden="true">
+            <svg width="100%" height="100%" viewBox="0 0 1000 360" fill="none" xmlns="http://www.w3.org/2000/svg">
+              {/* Crescent Moon */}
+              <path
+                d="M120 70 A 18 18 0 0 0 134 94 A 22 22 0 1 1 120 70 Z"
+                fill="#FCFAF5"
+                opacity="0.85"
+              />
+              {/* Subtle Botanical Leaf Silhouette (Left) */}
+              <path
+                d="M60 280 Q 90 220 140 210 Q 120 250 80 290 Z"
+                fill="#365B51"
+                opacity="0.6"
+              />
+              <path
+                d="M80 290 Q 120 260 170 270 Q 130 290 90 300 Z"
+                fill="#365B51"
+                opacity="0.4"
+              />
+              {/* Subtle Botanical Leaf Silhouette (Right) */}
+              <path
+                d="M920 270 Q 880 210 830 210 Q 860 250 900 280 Z"
+                fill="#365B51"
+                opacity="0.5"
+              />
+              {/* Minimalist 4-point stars / sparks */}
+              <g fill="#FCFAF5" opacity="0.6">
+                <path d="M860 60 Q 860 70 870 70 Q 860 70 860 80 Q 860 70 850 70 Q 860 70 860 60 Z" />
+                <path d="M220 150 Q 220 157 227 157 Q 220 157 220 164 Q 220 157 213 157 Q 220 157 220 150 Z" />
+                <path d="M780 180 Q 780 186 786 186 Q 780 186 780 192 Q 780 186 774 186 Q 780 186 780 180 Z" />
+              </g>
+              {/* Tiny soft dots */}
+              <circle cx="180" cy="90" r="1.5" fill="#FCFAF5" opacity="0.4" />
+              <circle cx="820" cy="110" r="1.5" fill="#FCFAF5" opacity="0.4" />
+              <circle cx="280" cy="240" r="1.5" fill="#FCFAF5" opacity="0.3" />
+              <circle cx="720" cy="230" r="1.5" fill="#FCFAF5" opacity="0.3" />
+            </svg>
+          </div>
+
+          <div className="qp-cta-inner">
+            <h2 className="qp-cta-title">
+              Maybe you don&rsquo;t need another thing to do.
+            </h2>
+            <p className="qp-cta-desc">
+              Sometimes the best thing you can give yourself is a little room.
+            </p>
+            <div>
+              <button className="qp-cta-btn qp-cta-btn-large">
+                <span>Find Your Quiet</span>
+                <ArrowRight size={16} strokeWidth={2} />
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+};
+</file>
+
+<file path="src/components/Footer.tsx">
+import React from 'react';
+
+export const Footer: React.FC = () => {
+  return (
+    <footer className="qp-footer-wrapper">
+      <div className="qp-container">
+        <div className="qp-footer-top">
+          {/* Brand & Mission Statement */}
+          <div className="qp-footer-brand-col">
+            <div className="qp-brand" style={{ marginBottom: 'var(--space-12)' }}>
+              <div className="qp-brand-mark" aria-hidden="true">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 3a9 9 0 0 0 9 9c0 4.97-4.03 9-9 9A9 9 0 0 1 3 12C3 7.03 7.03 3 12 3z" />
+                  <path d="M12 7v10" />
+                  <path d="M8 12c1.5 1 2.5 1 4 0" />
+                  <path d="M12 10c1.5-1 2.5-1 4 0" />
+                </svg>
+              </div>
+              <span className="qp-brand-text">Quiet Place</span>
+            </div>
+            <p className="qp-footer-tagline">
+              A slower corner of the internet for reflection, creativity, and a little more room.
+            </p>
+          </div>
+
+          {/* Navigation Links */}
+          <div className="qp-footer-links-grid">
+            <div className="qp-footer-col">
+              <span className="qp-footer-col-title">Navigation</span>
+              <a href="#explore" className="qp-footer-link">Explore</a>
+              <a href="#journal" className="qp-footer-link">Journal</a>
+              <a href="#how-it-works" className="qp-footer-link">Activities</a>
+              <a href="#about" className="qp-footer-link">About</a>
+            </div>
+
+            <div className="qp-footer-col">
+              <span className="qp-footer-col-title">Company</span>
+              <a href="#privacy" className="qp-footer-link">Privacy</a>
+              <a href="#contact" className="qp-footer-link">Contact</a>
+            </div>
+          </div>
+        </div>
+
+        {/* Bottom Bar */}
+        <div className="qp-footer-bottom">
+          <p className="qp-footer-copy">
+            &copy; {new Date().getFullYear()} Quiet Place. All rights reserved.
+          </p>
+          <div className="qp-footer-bottom-links">
+            <span className="qp-footer-meta-pill">Client-Side Demo Space</span>
+          </div>
+        </div>
+      </div>
+    </footer>
+  );
+};
+</file>
+
+<file path="src/components/Header.tsx">
+import React, { useState } from 'react';
+import { Search, Menu, X, ArrowRight } from 'lucide-react';
+
+export const Header: React.FC = () => {
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  return (
+    <header className="qp-header-wrapper">
+      <div className="qp-container">
+        <div className="qp-header-inner">
+          {/* Brand / Logo */}
+          <div className="qp-brand">
+            <div className="qp-brand-mark" aria-hidden="true">
+              {/* Original botanical/leaf & sun emblem in pure SVG */}
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 3a9 9 0 0 0 9 9c0 4.97-4.03 9-9 9A9 9 0 0 1 3 12C3 7.03 7.03 3 12 3z" />
+                <path d="M12 7v10" />
+                <path d="M8 12c1.5 1 2.5 1 4 0" />
+                <path d="M12 10c1.5-1 2.5-1 4 0" />
+              </svg>
+            </div>
+            <span className="qp-brand-text">Quiet Place</span>
+          </div>
+
+          {/* Center Navigation Links */}
+          <nav className="qp-nav" aria-label="Main Navigation">
+            <a href="#explore" className="qp-nav-link">Explore</a>
+            <a href="#journal" className="qp-nav-link">Journal</a>
+            <a href="#activities" className="qp-nav-link">Activities</a>
+            <a href="#about" className="qp-nav-link">About</a>
+          </nav>
+
+          {/* Right Action Items */}
+          <div className="qp-actions">
+            <button className="qp-icon-btn" aria-label="Search">
+              <Search size={19} strokeWidth={1.8} />
+            </button>
+
+            <button className="qp-signin-btn">
+              Sign in
+            </button>
+
+            <button className="qp-cta-btn">
+              <span>Find Your Quiet</span>
+              <ArrowRight size={15} strokeWidth={2} />
+            </button>
+
+            <button
+              className="qp-mobile-toggle"
+              aria-label="Toggle Menu"
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            >
+              {mobileMenuOpen ? <X size={22} /> : <Menu size={22} />}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Mobile Drawer */}
+      {mobileMenuOpen && (
+        <div className="qp-mobile-menu">
+          <a href="#explore" className="qp-nav-link" onClick={() => setMobileMenuOpen(false)}>Explore</a>
+          <a href="#journal" className="qp-nav-link" onClick={() => setMobileMenuOpen(false)}>Journal</a>
+          <a href="#activities" className="qp-nav-link" onClick={() => setMobileMenuOpen(false)}>Activities</a>
+          <a href="#about" className="qp-nav-link" onClick={() => setMobileMenuOpen(false)}>About</a>
+          <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}>
+            <button className="qp-signin-btn" style={{ flex: 1, padding: '10px 0', border: '1px solid var(--qp-border)' }}>
+              Sign in
+            </button>
+          </div>
+        </div>
+      )}
+    </header>
+  );
+};
+</file>
+
+<file path="src/components/Hero.tsx">
+import React from 'react';
+import { ArrowRight } from 'lucide-react';
+
+export const Hero: React.FC = () => {
+  return (
+    <section className="qp-hero-section">
+      <div className="qp-container" style={{ textAlign: 'center' }}>
+        {/* Eyebrow */}
+        <div className="qp-eyebrow">
+          A slower corner of the internet
+        </div>
+
+        {/* Editorial Headline */}
+        <h1 className="qp-hero-title">
+          Make Space<br />
+          For Something Quiet.
+        </h1>
+
+        {/* Description */}
+        <p className="qp-hero-desc">
+          A gentle space for reflection, creativity, and small moments that make the day feel a little lighter.
+        </p>
+
+        {/* Hero CTA Action Buttons */}
+        <div className="qp-hero-buttons">
+          <a href="#explore" className="qp-cta-btn" style={{ padding: '12px 28px', fontSize: '0.98rem' }}>
+            <span>Explore Quiet Places</span>
+            <ArrowRight size={16} strokeWidth={2} />
+          </a>
+
+          <a href="#how-it-works" className="qp-hero-secondary-btn">
+            How it works
+          </a>
+        </div>
+
+        {/* Atmospheric Landscape Illustration (Pure Vector SVG / HTML, 0 external images) */}
+        <div className="qp-hero-landscape-wrapper">
+          <svg
+            viewBox="0 0 1200 460"
+            className="qp-landscape-svg"
+            xmlns="http://www.w3.org/2000/svg"
+            aria-label="Illustration of a serene natural landscape with hills, trees, and warm sun"
+          >
+            <defs>
+              {/* Sky Gradient */}
+              <linearGradient id="skyGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stopColor="#F8F3E8" />
+                <stop offset="60%" stopColor="#EAF3EE" />
+                <stop offset="100%" stopColor="#DCEBE4" />
+              </linearGradient>
+
+              {/* Distant Mountains Gradient */}
+              <linearGradient id="distantHillsGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stopColor="#B3CBC3" />
+                <stop offset="100%" stopColor="#8DAFA4" />
+              </linearGradient>
+
+              {/* Mid Hills Gradient */}
+              <linearGradient id="midHillsGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stopColor="#5B8276" />
+                <stop offset="100%" stopColor="#3B6358" />
+              </linearGradient>
+
+              {/* Foreground Rolling Meadow Gradient */}
+              <linearGradient id="foreHillsGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stopColor="#2D544B" />
+                <stop offset="100%" stopColor="#173B35" />
+              </linearGradient>
+
+              {/* Sun Glow */}
+              <radialGradient id="sunGrad" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stopColor="#FDE8CD" stopOpacity="0.9" />
+                <stop offset="60%" stopColor="#F4A09A" stopOpacity="0.4" />
+                <stop offset="100%" stopColor="#F4A09A" stopOpacity="0" />
+              </radialGradient>
+            </defs>
+
+            {/* Background Sky Canvas */}
+            <rect width="1200" height="460" rx="24" fill="url(#skyGrad)" />
+
+            {/* Subtle Sun / Dawn Glow */}
+            <circle cx="760" cy="170" r="110" fill="url(#sunGrad)" />
+            <circle cx="760" cy="170" r="48" fill="#FBF3DE" opacity="0.9" />
+
+            {/* Soft Cream Cloud Silhouettes */}
+            <g fill="#FCFAF5" opacity="0.75">
+              <path d="M220 140 c15-20 45-20 60 0 c15-10 35-5 45 10 c12 0 25 10 20 25 c-5 10-85 10-125 0 c-10-10-10-25 0-35 z" />
+              <path d="M880 110 c20-18 55-15 70 5 c18-8 40-2 48 15 c15 2 25 15 18 28 c-10 10-100 8-136 0 c-12-15-10-38 0-48 z" />
+            </g>
+
+            {/* Distant Blue-Green Mountains */}
+            <path
+              d="M0 340 Q 180 220 380 280 T 820 250 T 1200 290 L 1200 460 L 0 460 Z"
+              fill="url(#distantHillsGrad)"
+              opacity="0.85"
+            />
+
+            {/* Midground Forest Hills */}
+            <path
+              d="M0 370 Q 260 270 540 330 T 1000 310 Q 1120 320 1200 350 L 1200 460 L 0 460 Z"
+              fill="url(#midHillsGrad)"
+            />
+
+            {/* Atmospheric Water / Meadow Reflection */}
+            <path
+              d="M340 390 Q 600 365 860 390 Q 1020 405 1200 400 L 1200 460 L 0 460 L 0 410 Q 160 415 340 390 Z"
+              fill="#224840"
+              opacity="0.5"
+            />
+
+            {/* Foreground Organic Ridge & Gentle Slope */}
+            <path
+              d="M0 405 Q 320 345 640 400 T 1200 380 L 1200 460 L 0 460 Z"
+              fill="url(#foreHillsGrad)"
+            />
+
+            {/* Decorative Organic Trees (Stylized Minimalist Silhouettes) */}
+            <g fill="#173B35">
+              {/* Tree Cluster Left */}
+              <path d="M140 400 c0-28 20-48 40-48 s40 20 40 48 c0 15-18 25-40 25 s-40-10-40-25 z" fill="#13332D" />
+              <path d="M100 420 c0-22 16-38 32-38 s32 16 32 38 c0 12-14 20-32 20 s-32-8-32-20 z" fill="#173B35" />
+              <path d="M210 415 c0-20 14-34 28-34 s28 14 28 34 c0 10-12 18-28 18 s-28-8-28-18 z" fill="#1A403A" />
+
+              {/* Tree Cluster Mid-Right */}
+              <path d="M780 395 c0-32 22-54 45-54 s45 22 45 54 c0 18-20 28-45 28 s-45-10-45-28 z" fill="#102D27" />
+              <path d="M850 410 c0-22 15-36 30-36 s30 14 30 36 c0 12-13 20-30 20 s-30-8-30-20 z" fill="#173B35" />
+
+              {/* Delicate Botanical Grass & Flora Details */}
+              <path d="M480 435 Q 485 410 495 405 Q 492 425 490 435" stroke="#78958B" strokeWidth="2.5" fill="none" strokeLinecap="round" />
+              <path d="M495 435 Q 503 415 515 412 Q 508 428 504 435" stroke="#78958B" strokeWidth="2" fill="none" strokeLinecap="round" />
+              <path d="M472 438 Q 470 420 464 416 Q 468 429 470 438" stroke="#78958B" strokeWidth="2" fill="none" strokeLinecap="round" />
+              
+              {/* Subtle Coral Wildflower Dots */}
+              <circle cx="500" cy="412" r="3.5" fill="#E96F67" />
+              <circle cx="518" cy="418" r="2.5" fill="#F4A09A" />
+              <circle cx="462" cy="422" r="3" fill="#E96F67" />
+            </g>
+          </svg>
+        </div>
+      </div>
+    </section>
+  );
+};
+</file>
+
+<file path="src/components/Journal.tsx">
+import React from 'react';
+import { ArrowUpRight, Clock } from 'lucide-react';
+
+interface Article {
+  id: string;
+  category: 'ATTENTION' | 'CREATIVITY' | 'SLOW LIVING';
+  title: string;
+  excerpt: string;
+  readTime: string;
+}
+
+const ARTICLES: Article[] = [
+  {
+    id: 'art-1',
+    category: 'ATTENTION',
+    title: 'Why your brain needs moments of doing nothing',
+    excerpt: "We've become remarkably good at filling every quiet moment. But sometimes the space between tasks is where our best ideas begin.",
+    readTime: '5 min read'
+  },
+  {
+    id: 'art-2',
+    category: 'CREATIVITY',
+    title: 'Making creativity part of an ordinary day',
+    excerpt: "You don't need a studio, an afternoon, or perfect conditions to make something. Start with ten minutes.",
+    readTime: '4 min read'
+  },
+  {
+    id: 'art-3',
+    category: 'SLOW LIVING',
+    title: 'The small rituals that make a day feel slower',
+    excerpt: 'A morning walk. A notebook beside the bed. Tea before opening your inbox. Small rituals can change the texture of an entire day.',
+    readTime: '6 min read'
+  }
+];
+
+export const Journal: React.FC = () => {
+  return (
+    <section className="qp-journal-section" id="journal">
+      <div className="qp-container">
+        {/* Section Header */}
+        <div className="qp-journal-header">
+          <div className="qp-eyebrow" style={{ marginBottom: 'var(--space-12)' }}>
+            From the Journal
+          </div>
+          <h2 className="qp-heading-2" style={{ marginBottom: 'var(--space-12)' }}>
+            Things worth thinking about.
+          </h2>
+          <p className="qp-body" style={{ maxWidth: '640px' }}>
+            Notes on creativity, attention, rest, and finding a little more space in an increasingly busy day.
+          </p>
+        </div>
+
+        {/* Editorial Journal Layout: 1 Featured Large Story + 2 Stacked Stories */}
+        <div className="qp-journal-grid">
+          {/* Main Featured Article (Left) */}
+          <article className="qp-journal-card qp-journal-featured">
+            <div className="qp-journal-featured-art">
+              <svg viewBox="0 0 540 260" className="qp-card-svg" xmlns="http://www.w3.org/2000/svg">
+                <rect width="540" height="260" fill="#EAF3EE" />
+                {/* Abstract mindful ripple circles */}
+                <circle cx="270" cy="130" r="100" stroke="#B3CBC3" strokeWidth="1.5" fill="none" opacity="0.4" />
+                <circle cx="270" cy="130" r="70" stroke="#78958B" strokeWidth="1.5" fill="none" opacity="0.6" />
+                <circle cx="270" cy="130" r="40" stroke="#365B51" strokeWidth="2" fill="none" opacity="0.8" />
+                <circle cx="270" cy="130" r="14" fill="#E96F67" />
+                <path d="M120 180 Q 270 140 420 180" stroke="#78958B" strokeWidth="2" fill="none" strokeDasharray="4 6" />
+              </svg>
+            </div>
+
+            <div className="qp-journal-content">
+              <div className="qp-journal-meta">
+                <span className="qp-journal-cat">{ARTICLES[0].category}</span>
+                <span className="qp-journal-time">
+                  <Clock size={13} /> {ARTICLES[0].readTime}
+                </span>
+              </div>
+
+              <h3 className="qp-journal-title qp-journal-featured-title">
+                <span>{ARTICLES[0].title}</span>
+                <ArrowUpRight className="qp-journal-arrow" size={22} strokeWidth={2} />
+              </h3>
+
+              <p className="qp-journal-excerpt">
+                {ARTICLES[0].excerpt}
+              </p>
+            </div>
+          </article>
+
+          {/* Secondary Stack (Right) */}
+          <div className="qp-journal-side-stack">
+            {ARTICLES.slice(1).map((article) => (
+              <article key={article.id} className="qp-journal-card qp-journal-side">
+                <div className="qp-journal-content">
+                  <div className="qp-journal-meta">
+                    <span className="qp-journal-cat">{article.category}</span>
+                    <span className="qp-journal-time">
+                      <Clock size={13} /> {article.readTime}
+                    </span>
+                  </div>
+
+                  <h3 className="qp-journal-title">
+                    <span>{article.title}</span>
+                    <ArrowUpRight className="qp-journal-arrow" size={18} strokeWidth={2} />
+                  </h3>
+
+                  <p className="qp-journal-excerpt">
+                    {article.excerpt}
+                  </p>
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+};
+</file>
+
+<file path="src/lib/mediapipe/visionPipeline.ts">
+import {
+  FilesetResolver,
+  PoseLandmarker,
+  FaceLandmarker,
+  type PoseLandmarkerResult,
+  type FaceLandmarkerResult,
+  type NormalizedLandmark
+} from '@mediapipe/tasks-vision';
+
+export interface VisionPipelineResults {
+  poseResult: PoseLandmarkerResult | null;
+  faceResult: FaceLandmarkerResult | null;
+  timestampMs: number;
+}
+
+export interface VisionPipelineStatus {
+  isReady: boolean;
+  isLoading: boolean;
+  error: string | null;
+  poseDetected: boolean;
+  faceDetected: boolean;
+  poseLandmarksCount: number;
+  faceLandmarksCount: number;
+  fps: number;
+}
+
+const WASM_CDN_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm';
+const POSE_MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
+const FACE_MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
+
+let poseLandmarkerInstance: PoseLandmarker | null = null;
+let faceLandmarkerInstance: FaceLandmarker | null = null;
+let initPromise: Promise<{ poseLandmarker: PoseLandmarker; faceLandmarker: FaceLandmarker }> | null = null;
+
+/**
+ * Initializes MediaPipe Tasks Vision FilesetResolver, PoseLandmarker, and FaceLandmarker.
+ * Reuses active instances to prevent double initialization during React StrictMode.
+ */
+export async function initializeMediaPipe(): Promise<{
+  poseLandmarker: PoseLandmarker;
+  faceLandmarker: FaceLandmarker;
+}> {
+  if (poseLandmarkerInstance && faceLandmarkerInstance) {
+    return {
+      poseLandmarker: poseLandmarkerInstance,
+      faceLandmarker: faceLandmarkerInstance
+    };
+  }
+
+  if (initPromise) {
+    return initPromise;
+  }
+
+  initPromise = (async () => {
+    try {
+      const vision = await FilesetResolver.forVisionTasks(WASM_CDN_URL);
+
+      const [poseLandmarker, faceLandmarker] = await Promise.all([
+        PoseLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: POSE_MODEL_URL,
+            delegate: 'GPU'
+          },
+          runningMode: 'VIDEO',
+          numPoses: 1,
+          minPoseDetectionConfidence: 0.5,
+          minPosePresenceConfidence: 0.5,
+          minTrackingConfidence: 0.5
+        }),
+        FaceLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: FACE_MODEL_URL,
+            delegate: 'GPU'
+          },
+          runningMode: 'VIDEO',
+          numFaces: 1,
+          minFaceDetectionConfidence: 0.5,
+          minFacePresenceConfidence: 0.5,
+          minTrackingConfidence: 0.5,
+          outputFaceBlendshapes: true
+        })
+      ]);
+
+      poseLandmarkerInstance = poseLandmarker;
+      faceLandmarkerInstance = faceLandmarker;
+
+      return { poseLandmarker, faceLandmarker };
+    } catch (err) {
+      initPromise = null;
+      throw err;
+    }
+  })();
+
+  return initPromise;
+}
+
+/**
+ * Executes a single synchronized video frame inference for both Pose & Face landmarkers.
+ */
+export function detectLandmarksForVideo(
+  video: HTMLVideoElement,
+  timestampMs: number
+): VisionPipelineResults | null {
+  if (!poseLandmarkerInstance || !faceLandmarkerInstance) {
+    return null;
+  }
+
+  if (video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
+    return null;
+  }
+
+  try {
+    const poseResult = poseLandmarkerInstance.detectForVideo(video, timestampMs);
+    const faceResult = faceLandmarkerInstance.detectForVideo(video, timestampMs);
+
+    return {
+      poseResult,
+      faceResult,
+      timestampMs
+    };
+  } catch (err) {
+    console.error('Inference error during frame processing:', err);
+    return null;
+  }
+}
+
+/**
+ * Standard Pose keypoint connections for developer skeleton overlay.
+ */
+export const POSE_CONNECTIONS: [number, number][] = [
+  // Torso & Shoulders
+  [11, 12], // left shoulder to right shoulder
+  [11, 23], // left shoulder to left hip
+  [12, 24], // right shoulder to right hip
+  [23, 24], // left hip to right hip
+  // Left Arm
+  [11, 13], [13, 15],
+  // Right Arm
+  [12, 14], [14, 16],
+  // Head / Ears / Eyes
+  [0, 1], [1, 2], [2, 3], [3, 7], // Right eye & ear
+  [0, 4], [4, 5], [5, 6], [6, 8], // Left eye & ear
+  [9, 10] // Mouth
+];
+
+/**
+ * Helper to render pose & face landmark points and connections onto a target 2D canvas context.
+ */
+export function drawLandmarksOnCanvas(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  poseLandmarks?: NormalizedLandmark[],
+  faceLandmarks?: NormalizedLandmark[]
+): void {
+  ctx.clearRect(0, 0, width, height);
+
+  // 1. Render Pose Skeleton
+  if (poseLandmarks && poseLandmarks.length > 0) {
+    // Draw connections
+    ctx.strokeStyle = '#38bdf8'; // Sky blue
+    ctx.lineWidth = 2.5;
+
+    for (const [startIdx, endIdx] of POSE_CONNECTIONS) {
+      const p1 = poseLandmarks[startIdx];
+      const p2 = poseLandmarks[endIdx];
+      if (p1 && p2 && (p1.visibility ?? 1) > 0.4 && (p2.visibility ?? 1) > 0.4) {
+        ctx.beginPath();
+        ctx.moveTo(p1.x * width, p1.y * height);
+        ctx.lineTo(p2.x * width, p2.y * height);
+        ctx.stroke();
+      }
+    }
+
+    // Draw landmark keypoint dots
+    for (const lm of poseLandmarks) {
+      if ((lm.visibility ?? 1) > 0.4) {
+        ctx.beginPath();
+        ctx.arc(lm.x * width, lm.y * height, 4, 0, 2 * Math.PI);
+        ctx.fillStyle = '#10b981'; // Emerald
+        ctx.fill();
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+      }
+    }
+  }
+
+  // 2. Render Face Mesh / Key Points (subtle, lightweight developer dots)
+  if (faceLandmarks && faceLandmarks.length > 0) {
+    // Render key facial contour dots
+    ctx.fillStyle = 'rgba(244, 63, 94, 0.75)'; // Coral rose
+    // Draw subsampled face mesh landmarks for smooth real-time performance
+    const step = 4; // Sample every 4th landmark for clean debug view
+    for (let i = 0; i < faceLandmarks.length; i += step) {
+      const lm = faceLandmarks[i];
+      ctx.beginPath();
+      ctx.arc(lm.x * width, lm.y * height, 1.8, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+  }
+}
+</file>
+
+<file path="src/lib/posture/geometry.ts">
+import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
+
+export interface Point2D {
+  x: number;
+  y: number;
+  z?: number;
+  visibility?: number;
+}
+
+/**
+ * Calculates Euclidean distance between two 2D points in normalized screen space.
+ */
+export function distance(a: Point2D, b: Point2D): number {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+/**
+ * Calculates midpoint between two points.
+ */
+export function midpoint(a: Point2D, b: Point2D): Point2D {
+  return {
+    x: (a.x + b.x) / 2,
+    y: (a.y + b.y) / 2,
+    z: a.z !== undefined && b.z !== undefined ? (a.z + b.z) / 2 : undefined,
+    visibility:
+      a.visibility !== undefined && b.visibility !== undefined
+        ? (a.visibility + b.visibility) / 2
+        : a.visibility ?? b.visibility
+  };
+}
+
+/**
+ * Calculates vector from pointA to pointB (b - a).
+ */
+export function vector(a: Point2D, b: Point2D): Point2D {
+  return {
+    x: b.x - a.x,
+    y: b.y - a.y
+  };
+}
+
+/**
+ * Calculates signed angle in degrees of vector from a to b relative to horizontal axis (X-axis).
+ */
+export function angleFromHorizontal(a: Point2D, b: Point2D): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const rad = Math.atan2(dy, dx);
+  return (rad * 180) / Math.PI;
+}
+
+/**
+ * Calculates signed angle in degrees of vector from top to bottom relative to vertical axis (Y-axis down).
+ * 0° is straight down. Positive = tilted right, Negative = tilted left.
+ */
+export function angleFromVertical(top: Point2D, bottom: Point2D): number {
+  const dx = bottom.x - top.x;
+  const dy = bottom.y - top.y;
+  const rad = Math.atan2(dx, dy);
+  return (rad * 180) / Math.PI;
+}
+
+/**
+ * Calculates angle between two 2D vectors in degrees [0, 180].
+ */
+export function angleBetweenVectors(v1: Point2D, v2: Point2D): number {
+  const dot = v1.x * v2.x + v1.y * v2.y;
+  const mag1 = Math.sqrt(v1.x * v1.x + v1.y * v1.y);
+  const mag2 = Math.sqrt(v2.x * v2.x + v2.y * v2.y);
+
+  if (mag1 === 0 || mag2 === 0) return 0;
+
+  const cosTheta = Math.max(-1, Math.min(1, dot / (mag1 * mag2)));
+  return (Math.acos(cosTheta) * 180) / Math.PI;
+}
+
+/**
+ * Verifies if a landmark exists and has finite coordinates.
+ * In MediaPipe Tasks Vision, visibility can be undefined or low even for detected landmarks on webcams.
+ */
+export function isValidLandmark(
+  lm: NormalizedLandmark | undefined,
+  minVisibility = 0.2
+): lm is NormalizedLandmark {
+  if (!lm) return false;
+  if (!Number.isFinite(lm.x) || !Number.isFinite(lm.y)) return false;
+  // If visibility is populated and below threshold, reject. If undefined/null, accept if finite coordinates.
+  if (typeof lm.visibility === 'number' && lm.visibility < minVisibility) return false;
+  return true;
+}
+</file>
+
+<file path="src/lib/posture/postureClassifier.ts">
+import type { PostureMetrics } from './postureMetrics';
+
+/**
+ * Baseline posture thresholds for preliminary classification.
+ */
+export const POSTURE_THRESHOLDS = {
+  MIN_CONFIDENCE: 0.25,
+  
+  // Forward slouching thresholds
+  HEAD_FORWARD_MILD: 0.16,
+  HEAD_FORWARD_SIGNIFICANT: 0.26,
+  HEAD_FORWARD_SEVERE: 0.38,
+
+  HEAD_TORSO_ANGLE_MILD: 18.0,
+  HEAD_TORSO_ANGLE_SIGNIFICANT: 28.0,
+  HEAD_TORSO_ANGLE_SEVERE: 38.0,
+
+  // Lateral leaning thresholds
+  LATERAL_TILT_MILD: 6.0,
+  LATERAL_TILT_SIGNIFICANT: 12.0,
+  LATERAL_TILT_SEVERE: 18.0,
+
+  SHOULDER_TILT_MILD: 5.0,
+  SHOULDER_TILT_SIGNIFICANT: 9.0,
+  SHOULDER_TILT_SEVERE: 14.0
+} as const;
+
+export type PostureStatus = 'good' | 'slouching' | 'leaning' | 'insufficient_data';
+export type PostureSeverity = 0 | 1 | 2 | 3;
+
+export interface PostureClassification {
+  status: PostureStatus;
+  severity: PostureSeverity;
+  reason?: string;
+}
+
+/**
+ * Classifies posture metrics into ergonomic states (good, slouching, leaning, or insufficient_data).
+ */
+export function classifyPosture(metrics: PostureMetrics): PostureClassification {
+  // 1. Check data sufficiency & presence
+  if (!metrics.isValid || metrics.confidence < POSTURE_THRESHOLDS.MIN_CONFIDENCE) {
+    return {
+      status: 'insufficient_data',
+      severity: 0,
+      reason: 'Body landmarks not sufficiently visible or out of frame'
+    };
+  }
+
+  // Check if at least one primary posture angle is calculable
+  const hasLateral = metrics.lateralTiltDeg !== null;
+  const hasShoulder = metrics.shoulderTiltDeg !== null;
+  const hasHeadOffset = metrics.headForwardOffset !== null;
+  const hasHeadAngle = metrics.headTorsoAngleDeg !== null;
+
+  if (!hasLateral && !hasShoulder && !hasHeadOffset && !hasHeadAngle) {
+    return {
+      status: 'insufficient_data',
+      severity: 0,
+      reason: 'Key upper body landmarks missing'
+    };
+  }
+
+  // 2. Evaluate Lateral Leaning Severity
+  let leanSeverity: PostureSeverity = 0;
+  const lateralTilt = metrics.lateralTiltDeg ?? 0;
+  const shoulderTilt = metrics.shoulderTiltDeg ?? 0;
+
+  if (
+    (hasLateral && lateralTilt >= POSTURE_THRESHOLDS.LATERAL_TILT_SEVERE) ||
+    (hasShoulder && shoulderTilt >= POSTURE_THRESHOLDS.SHOULDER_TILT_SEVERE)
+  ) {
+    leanSeverity = 3;
+  } else if (
+    (hasLateral && lateralTilt >= POSTURE_THRESHOLDS.LATERAL_TILT_SIGNIFICANT) ||
+    (hasShoulder && shoulderTilt >= POSTURE_THRESHOLDS.SHOULDER_TILT_SIGNIFICANT)
+  ) {
+    leanSeverity = 2;
+  } else if (
+    (hasLateral && lateralTilt >= POSTURE_THRESHOLDS.LATERAL_TILT_MILD) ||
+    (hasShoulder && shoulderTilt >= POSTURE_THRESHOLDS.SHOULDER_TILT_MILD)
+  ) {
+    leanSeverity = 1;
+  }
+
+  // 3. Evaluate Forward Slouching Severity
+  let slouchSeverity: PostureSeverity = 0;
+  const headOffset = metrics.headForwardOffset ?? 0;
+  const headAngle = metrics.headTorsoAngleDeg ?? 0;
+
+  if (
+    (hasHeadOffset && headOffset >= POSTURE_THRESHOLDS.HEAD_FORWARD_SEVERE) ||
+    (hasHeadAngle && headAngle >= POSTURE_THRESHOLDS.HEAD_TORSO_ANGLE_SEVERE)
+  ) {
+    slouchSeverity = 3;
+  } else if (
+    (hasHeadOffset && headOffset >= POSTURE_THRESHOLDS.HEAD_FORWARD_SIGNIFICANT) ||
+    (hasHeadAngle && headAngle >= POSTURE_THRESHOLDS.HEAD_TORSO_ANGLE_SIGNIFICANT)
+  ) {
+    slouchSeverity = 2;
+  } else if (
+    (hasHeadOffset && headOffset >= POSTURE_THRESHOLDS.HEAD_FORWARD_MILD) ||
+    (hasHeadAngle && headAngle >= POSTURE_THRESHOLDS.HEAD_TORSO_ANGLE_MILD)
+  ) {
+    slouchSeverity = 1;
+  }
+
+  // 4. Primary Posture Determination
+  if (leanSeverity === 0 && slouchSeverity === 0) {
+    return {
+      status: 'good',
+      severity: 0,
+      reason: 'Upright and well aligned'
+    };
+  }
+
+  if (leanSeverity >= slouchSeverity && leanSeverity > 0) {
+    const directionStr = metrics.leanDirection !== 'neutral' ? ` (${metrics.leanDirection})` : '';
+    const details = [
+      hasLateral ? `Torso tilt: ${metrics.lateralTiltDeg}°${directionStr}` : null,
+      hasShoulder ? `Shoulder tilt: ${metrics.shoulderTiltDeg}°` : null
+    ].filter(Boolean).join(', ');
+
+    return {
+      status: 'leaning',
+      severity: leanSeverity,
+      reason: details || 'Lateral torso lean detected'
+    };
+  } else {
+    const details = [
+      hasHeadOffset ? `Head offset: ${metrics.headForwardOffset}` : null,
+      hasHeadAngle ? `Head-torso angle: ${metrics.headTorsoAngleDeg}°` : null
+    ].filter(Boolean).join(', ');
+
+    return {
+      status: 'slouching',
+      severity: slouchSeverity,
+      reason: details || 'Forward head slouch detected'
+    };
+  }
+}
+</file>
+
+<file path="src/lib/posture/postureMetrics.ts">
+import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
+import {
+  distance,
+  midpoint,
+  vector,
+  angleFromHorizontal,
+  angleFromVertical,
+  angleBetweenVectors,
+  isValidLandmark,
+  type Point2D
+} from './geometry';
+
+/**
+ * Standard MediaPipe Pose Landmark Indices.
+ */
+export const POSE_LANDMARK_INDEX = {
+  NOSE: 0,
+  LEFT_EYE_INNER: 1,
+  LEFT_EYE: 2,
+  LEFT_EYE_OUTER: 3,
+  RIGHT_EYE_INNER: 4,
+  RIGHT_EYE: 5,
+  RIGHT_EYE_OUTER: 6,
+  LEFT_EAR: 7,
+  RIGHT_EAR: 8,
+  MOUTH_LEFT: 9,
+  MOUTH_RIGHT: 10,
+  LEFT_SHOULDER: 11,
+  RIGHT_SHOULDER: 12,
+  LEFT_ELBOW: 13,
+  RIGHT_ELBOW: 14,
+  LEFT_WRIST: 15,
+  RIGHT_WRIST: 16,
+  LEFT_PINKY: 17,
+  RIGHT_PINKY: 18,
+  LEFT_INDEX: 19,
+  RIGHT_INDEX: 20,
+  LEFT_THUMB: 21,
+  RIGHT_THUMB: 22,
+  LEFT_HIP: 23,
+  RIGHT_HIP: 24
+} as const;
+
+export type PoseLandmarkName = keyof typeof POSE_LANDMARK_INDEX;
+
+/**
+ * Detailed visibility status for debug inspection.
+ */
+export interface LandmarkVisibilityDebug {
+  nose: number | null;
+  leftEar: number | null;
+  rightEar: number | null;
+  leftShoulder: number | null;
+  rightShoulder: number | null;
+  leftHip: number | null;
+  rightHip: number | null;
+}
+
+/**
+ * Structured ergonomic posture metrics extracted from a single frame.
+ * Values are number or null (when insufficient landmarks exist for that specific metric).
+ */
+export interface PostureMetrics {
+  lateralTiltDeg: number | null;       // Angle of torso relative to vertical in degrees (magnitude)
+  signedLateralTiltDeg: number | null; // Signed torso tilt: positive = right, negative = left
+  shoulderTiltDeg: number | null;      // Angle of shoulder line relative to horizontal in degrees
+  headForwardOffset: number | null;    // Horizontal head displacement relative to shoulders, normalized by shoulderWidth
+  headTorsoAngleDeg: number | null;    // Angle between head vector and torso vector
+  shoulderWidth: number | null;        // Euclidean distance between shoulders in screen space
+  torsoLength: number | null;          // Euclidean distance between shoulder center and hip center
+  confidence: number;                  // Landmark tracking confidence [0.0 - 1.0]
+  leanDirection: 'neutral' | 'left' | 'right';
+  visibilityDebug: LandmarkVisibilityDebug;
+  isValid: boolean;
+}
+
+/**
+ * Extract verified named landmark from array.
+ */
+export function getPoseLandmark(
+  landmarks: NormalizedLandmark[],
+  name: PoseLandmarkName
+): NormalizedLandmark | undefined {
+  const index = POSE_LANDMARK_INDEX[name];
+  const lm = landmarks[index];
+  return isValidLandmark(lm) ? lm : undefined;
+}
+
+/**
+ * Computes posture metrics modularly per available landmark group.
+ */
+export function computePostureMetrics(landmarks: NormalizedLandmark[] | undefined): PostureMetrics {
+  const emptyVisibility: LandmarkVisibilityDebug = {
+    nose: null,
+    leftEar: null,
+    rightEar: null,
+    leftShoulder: null,
+    rightShoulder: null,
+    leftHip: null,
+    rightHip: null
+  };
+
+  const defaultInvalidMetrics: PostureMetrics = {
+    lateralTiltDeg: null,
+    signedLateralTiltDeg: null,
+    shoulderTiltDeg: null,
+    headForwardOffset: null,
+    headTorsoAngleDeg: null,
+    shoulderWidth: null,
+    torsoLength: null,
+    confidence: 0,
+    leanDirection: 'neutral',
+    visibilityDebug: emptyVisibility,
+    isValid: false
+  };
+
+  if (!landmarks || landmarks.length < 25) {
+    return defaultInvalidMetrics;
+  }
+
+  // 1. Retrieve individual landmarks
+  const nose = getPoseLandmark(landmarks, 'NOSE');
+  const leftEar = getPoseLandmark(landmarks, 'LEFT_EAR');
+  const rightEar = getPoseLandmark(landmarks, 'RIGHT_EAR');
+  const leftShoulder = getPoseLandmark(landmarks, 'LEFT_SHOULDER');
+  const rightShoulder = getPoseLandmark(landmarks, 'RIGHT_SHOULDER');
+  const leftHip = getPoseLandmark(landmarks, 'LEFT_HIP');
+  const rightHip = getPoseLandmark(landmarks, 'RIGHT_HIP');
+
+  const visibilityDebug: LandmarkVisibilityDebug = {
+    nose: nose?.visibility !== undefined ? Number(nose.visibility.toFixed(2)) : (nose ? 1.0 : null),
+    leftEar: leftEar?.visibility !== undefined ? Number(leftEar.visibility.toFixed(2)) : (leftEar ? 1.0 : null),
+    rightEar: rightEar?.visibility !== undefined ? Number(rightEar.visibility.toFixed(2)) : (rightEar ? 1.0 : null),
+    leftShoulder: leftShoulder?.visibility !== undefined ? Number(leftShoulder.visibility.toFixed(2)) : (leftShoulder ? 1.0 : null),
+    rightShoulder: rightShoulder?.visibility !== undefined ? Number(rightShoulder.visibility.toFixed(2)) : (rightShoulder ? 1.0 : null),
+    leftHip: leftHip?.visibility !== undefined ? Number(leftHip.visibility.toFixed(2)) : (leftHip ? 1.0 : null),
+    rightHip: rightHip?.visibility !== undefined ? Number(rightHip.visibility.toFixed(2)) : (rightHip ? 1.0 : null)
+  };
+
+  // Check presence count of primary anchors
+  const allAnchors = [nose, leftEar, rightEar, leftShoulder, rightShoulder, leftHip, rightHip];
+  const presentCount = allAnchors.filter(Boolean).length;
+
+  if (presentCount === 0 || (!leftShoulder && !rightShoulder)) {
+    return {
+      ...defaultInvalidMetrics,
+      visibilityDebug,
+      confidence: 0
+    };
+  }
+
+  // Calculate confidence score [0.0 - 1.0] based on available anchors
+  const visList = allAnchors.map((lm) => (lm ? (lm.visibility ?? 0.85) : 0));
+  const confidence = Number((visList.reduce((a, b) => a + b, 0) / allAnchors.length).toFixed(2));
+
+  // 2. Compute Shoulder Dimensions & Tilt
+  let shoulderWidth: number | null = null;
+  let shoulderCenter: Point2D | null = null;
+  let shoulderTiltDeg: number | null = null;
+
+  if (leftShoulder && rightShoulder) {
+    shoulderWidth = Number(distance(leftShoulder, rightShoulder).toFixed(3));
+    shoulderCenter = midpoint(leftShoulder, rightShoulder);
+
+    const rawShoulderAngle = angleFromHorizontal(leftShoulder, rightShoulder);
+    shoulderTiltDeg = Number(
+      Math.abs(Math.abs(rawShoulderAngle) > 90 ? Math.abs(rawShoulderAngle) - 180 : rawShoulderAngle).toFixed(1)
+    );
+  } else if (leftShoulder) {
+    shoulderCenter = leftShoulder;
+  } else if (rightShoulder) {
+    shoulderCenter = rightShoulder;
+  }
+
+  // 3. Compute Hip Center & Torso Dimensions
+  let hipCenter: Point2D | null = null;
+  let torsoLength: number | null = null;
+
+  if (leftHip && rightHip) {
+    hipCenter = midpoint(leftHip, rightHip);
+  } else if (leftHip) {
+    hipCenter = leftHip;
+  } else if (rightHip) {
+    hipCenter = rightHip;
+  } else if (shoulderCenter) {
+    // If hips are below camera view (standard desk sitting), synthesize hip anchor from torso projection
+    hipCenter = {
+      x: shoulderCenter.x,
+      y: Math.min(1.0, shoulderCenter.y + 0.45)
+    };
+  }
+
+  if (shoulderCenter && hipCenter) {
+    torsoLength = Number(distance(shoulderCenter, hipCenter).toFixed(3));
+  }
+
+  // 4. Lateral Torso Tilt
+  let lateralTiltDeg: number | null = null;
+  let signedLateralTiltDeg: number | null = null;
+  let leanDirection: 'neutral' | 'left' | 'right' = 'neutral';
+
+  if (shoulderCenter && hipCenter) {
+    signedLateralTiltDeg = Number(angleFromVertical(shoulderCenter, hipCenter).toFixed(1));
+    lateralTiltDeg = Number(Math.abs(signedLateralTiltDeg).toFixed(1));
+
+    if (signedLateralTiltDeg > 3.0) {
+      leanDirection = 'right';
+    } else if (signedLateralTiltDeg < -3.0) {
+      leanDirection = 'left';
+    }
+  }
+
+  // 5. Head Reference Point (Ear Center or Nose)
+  let headCenter: Point2D | null = null;
+  if (leftEar && rightEar) {
+    const earMid = midpoint(leftEar, rightEar);
+    headCenter = nose ? midpoint(earMid, nose) : earMid;
+  } else if (leftEar && nose) {
+    headCenter = midpoint(leftEar, nose);
+  } else if (rightEar && nose) {
+    headCenter = midpoint(rightEar, nose);
+  } else if (nose) {
+    headCenter = nose;
+  } else if (leftEar) {
+    headCenter = leftEar;
+  } else if (rightEar) {
+    headCenter = rightEar;
+  }
+
+  // 6. Forward Head Offset
+  let headForwardOffset: number | null = null;
+  if (headCenter && shoulderCenter) {
+    const rawDisplacement = Math.abs(headCenter.x - shoulderCenter.x);
+    const normalizationScale = shoulderWidth && shoulderWidth > 0.05 ? shoulderWidth : 0.25;
+    headForwardOffset = Number((rawDisplacement / normalizationScale).toFixed(3));
+  }
+
+  // 7. Head-Torso Alignment Angle
+  let headTorsoAngleDeg: number | null = null;
+  if (headCenter && shoulderCenter && hipCenter) {
+    const headVec = vector(shoulderCenter, headCenter);
+    const torsoVec = vector(hipCenter, shoulderCenter);
+    headTorsoAngleDeg = Number(angleBetweenVectors(headVec, torsoVec).toFixed(1));
+  }
+
+  return {
+    lateralTiltDeg,
+    signedLateralTiltDeg,
+    shoulderTiltDeg,
+    headForwardOffset,
+    headTorsoAngleDeg,
+    shoulderWidth,
+    torsoLength,
+    confidence,
+    leanDirection,
+    visibilityDebug,
+    isValid: true
+  };
+}
+</file>
+
+<file path="src/lib/posture/smoother.ts">
+import type { PostureMetrics } from './postureMetrics';
+
+/**
+ * Exponential Moving Average (EMA) smoothing for frame-by-frame posture metrics
+ * that safely handles nullable metric values.
+ */
+export class PostureMetricsSmoother {
+  private alpha: number;
+  private currentSmoothed: PostureMetrics | null = null;
+
+  constructor(alpha = 0.35) {
+    this.alpha = Math.max(0.05, Math.min(1.0, alpha));
+  }
+
+  private smoothVal(prev: number | null, raw: number | null, precision: number): number | null {
+    if (raw === null) return prev;
+    if (prev === null) return raw;
+    const a = this.alpha;
+    return Number((prev * (1 - a) + raw * a).toFixed(precision));
+  }
+
+  public smooth(raw: PostureMetrics): PostureMetrics {
+    if (!raw.isValid) {
+      this.currentSmoothed = null;
+      return raw;
+    }
+
+    if (!this.currentSmoothed) {
+      this.currentSmoothed = { ...raw };
+      return raw;
+    }
+
+    const prev = this.currentSmoothed;
+
+    const smoothed: PostureMetrics = {
+      lateralTiltDeg: this.smoothVal(prev.lateralTiltDeg, raw.lateralTiltDeg, 1),
+      signedLateralTiltDeg: this.smoothVal(prev.signedLateralTiltDeg, raw.signedLateralTiltDeg, 1),
+      shoulderTiltDeg: this.smoothVal(prev.shoulderTiltDeg, raw.shoulderTiltDeg, 1),
+      headForwardOffset: this.smoothVal(prev.headForwardOffset, raw.headForwardOffset, 3),
+      headTorsoAngleDeg: this.smoothVal(prev.headTorsoAngleDeg, raw.headTorsoAngleDeg, 1),
+      shoulderWidth: this.smoothVal(prev.shoulderWidth, raw.shoulderWidth, 3),
+      torsoLength: this.smoothVal(prev.torsoLength, raw.torsoLength, 3),
+      confidence: Number((prev.confidence * (1 - this.alpha) + raw.confidence * this.alpha).toFixed(2)),
+      leanDirection: raw.leanDirection,
+      visibilityDebug: raw.visibilityDebug,
+      isValid: true
+    };
+
+    this.currentSmoothed = smoothed;
+    return smoothed;
+  }
+
+  public reset(): void {
+    this.currentSmoothed = null;
+  }
+}
+</file>
+
+<file path="src/lib/channel.ts">
+import type { SyncMessage } from '../types/messages';
+
+const CHANNEL_NAME = 'posturesync';
+
+let channelInstance: BroadcastChannel | null = null;
+
+function getChannel(): BroadcastChannel {
+  if (!channelInstance) {
+    channelInstance = new BroadcastChannel(CHANNEL_NAME);
+  }
+  return channelInstance;
+}
+
+/**
+ * Send a type-safe message across browser tabs using the posturesync BroadcastChannel.
+ */
+export function send(message: SyncMessage): void {
+  const channel = getChannel();
+  channel.postMessage(message);
+}
+
+/**
+ * Listen for messages on the posturesync BroadcastChannel.
+ * Returns an unsubscribe cleanup function.
+ */
+export function onMessage(callback: (message: SyncMessage) => void): () => void {
+  const channel = getChannel();
+  
+  const handler = (event: MessageEvent<SyncMessage>) => {
+    if (event.data && typeof event.data === 'object' && 'type' in event.data) {
+      callback(event.data);
+    }
+  };
+
+  channel.addEventListener('message', handler);
+
+  return () => {
+    channel.removeEventListener('message', handler);
+  };
+}
+</file>
+
+<file path="src/pages/Demo.tsx">
+import React, { useEffect, useState } from 'react';
+import { send, onMessage } from '../lib/channel';
+import type { SyncMessage } from '../types/messages';
+import { Header } from '../components/Header';
+import { Hero } from '../components/Hero';
+import { Features } from '../components/Features';
+import { Discovery } from '../components/Discovery';
+import { Journal } from '../components/Journal';
+import { FinalCTA } from '../components/FinalCTA';
+import { Footer } from '../components/Footer';
+import { AlertCircle } from 'lucide-react';
+
+export const Demo: React.FC = () => {
+  const [isInterventionActive, setIsInterventionActive] = useState<boolean>(false);
+  const [activeAlertDetail, setActiveAlertDetail] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Notify any open dashboard that this demo tab is active
+    send({ type: 'DEMO_READY' });
+
+    // Listen on BroadcastChannel for intervention commands
+    const unsubscribe = onMessage((msg: SyncMessage) => {
+      if (msg.type === 'POSTURE_STATUS') {
+        if (msg.severity >= 2) {
+          setIsInterventionActive(true);
+          setActiveAlertDetail(`Posture Alert: ${msg.status.toUpperCase()} (Severity ${msg.severity}) detected`);
+        } else {
+          setIsInterventionActive(false);
+          setActiveAlertDetail(null);
+        }
+      } else if (msg.type === 'CLEAR_INTERVENTION') {
+        setIsInterventionActive(false);
+        setActiveAlertDetail(null);
+      } else if (msg.type === 'BLINK_ALERT') {
+        setIsInterventionActive(true);
+        setActiveAlertDetail(`Blink Alert: Low blink rate (${msg.blinksPerMin}/min). Rest your eyes.`);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  return (
+    <div className="qp-page">
+      {/* Visual Intervention Overlay when Bad Posture is Triggered */}
+      {isInterventionActive && (
+        <div className="intervention-overlay">
+          <div style={{
+            backgroundColor: 'var(--qp-cream-light)',
+            border: '1px solid rgba(233, 111, 103, 0.4)',
+            padding: 'var(--space-32) var(--space-48)',
+            borderRadius: '16px',
+            boxShadow: '0 24px 48px rgba(23, 59, 53, 0.2), 0 0 40px rgba(233, 111, 103, 0.25)',
+            textAlign: 'center',
+            maxWidth: '520px',
+            pointerEvents: 'auto',
+            color: 'var(--qp-forest)'
+          }}>
+            <div style={{
+              width: '56px',
+              height: '56px',
+              borderRadius: '50%',
+              backgroundColor: 'rgba(233, 111, 103, 0.15)',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: 'var(--qp-coral)',
+              marginBottom: 'var(--space-16)'
+            }}>
+              <AlertCircle size={32} strokeWidth={2} />
+            </div>
+            <h2 className="qp-heading-3" style={{ marginBottom: 'var(--space-8)' }}>
+              Posture Notice
+            </h2>
+            <p style={{ color: 'var(--qp-coral)', fontWeight: 600, fontSize: '0.95rem', marginBottom: 'var(--space-12)' }}>
+              {activeAlertDetail}
+            </p>
+            <p className="qp-body-sm" style={{ color: 'var(--qp-forest-muted)' }}>
+              Gently align your spine, drop your shoulders, and look straight ahead. Clear the alert on your dashboard tab to resume reading.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Main Content Area (blurs when intervention is triggered) */}
+      <div className={`demo-content-wrapper ${isInterventionActive ? 'blurred' : ''}`}>
+        {/* Navigation Header */}
+        <Header />
+
+        {/* Hero Section */}
+        <Hero />
+
+        {/* Philosophy & Core Features Section */}
+        <Features />
+
+        {/* Places / Discovery Section */}
+        <Discovery />
+
+        {/* Journal / Editorial Section */}
+        <Journal />
+
+        {/* Closing Calm CTA Section */}
+        <FinalCTA />
+
+        {/* Footer */}
+        <Footer />
+      </div>
+    </div>
+  );
+};
+</file>
+
+<file path="src/types/messages.ts">
+export type PostureStatusType = 'good' | 'slouching' | 'leaning';
+export type SeverityLevel = 0 | 1 | 2 | 3;
+
+export interface PostureStatusMessage {
+  type: 'POSTURE_STATUS';
+  status: PostureStatusType;
+  severity: SeverityLevel;
+}
+
+export interface BlinkAlertMessage {
+  type: 'BLINK_ALERT';
+  blinksPerMin: number;
+}
+
+export interface BreakReminderMessage {
+  type: 'BREAK_REMINDER';
+}
+
+export interface ClearInterventionMessage {
+  type: 'CLEAR_INTERVENTION';
+}
+
+export interface DemoReadyMessage {
+  type: 'DEMO_READY';
+}
+
+export type SyncMessage =
+  | PostureStatusMessage
+  | BlinkAlertMessage
+  | BreakReminderMessage
+  | ClearInterventionMessage
+  | DemoReadyMessage;
+</file>
+
+<file path="src/main.tsx">
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import './index.css'
+import App from './App.tsx'
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+)
+</file>
+
+<file path=".gitignore">
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+</file>
+
+<file path=".oxlintrc.json">
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["react", "typescript", "oxc"],
+  "rules": {
+    "react/rules-of-hooks": "error",
+    "react/only-export-components": ["warn", { "allowConstantExport": true }]
+  }
+}
+</file>
+
+<file path="index.html">
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>syncposture</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+</file>
+
+<file path="package.json">
+{
+  "name": "syncposture",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "^1.0.1",
+    "lucide-react": "^1.39.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.1.0",
+    "oxlint": "^1.79.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.2.2"
+  }
+}
+</file>
+
+<file path="README.md">
+# React + TypeScript + Vite
+
+This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+
+Currently, two official plugins are available:
+
+- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
+- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+
+## React Compiler
+
+The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+
+## Expanding the Oxlint configuration
+
+If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
+
+```json
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["react", "typescript", "oxc"],
+  "options": {
+    "typeAware": true
+  },
+  "rules": {
+    "react/rules-of-hooks": "error",
+    "react/only-export-components": ["warn", { "allowConstantExport": true }]
+  }
+}
+```
+
+See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+</file>
+
+<file path="tsconfig.app.json">
+{
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    "target": "es2023",
+    "lib": ["ES2023", "DOM"],
+    "module": "esnext",
+    "types": ["vite/client"],
+    "allowArbitraryExtensions": true,
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+
+    /* Linting */
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["src"]
+}
+</file>
+
+<file path="tsconfig.json">
+{
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.app.json" },
+    { "path": "./tsconfig.node.json" }
+  ]
+}
+</file>
+
+<file path="tsconfig.node.json">
+{
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo",
+    "target": "es2023",
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "module": "nodenext",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+
+    /* Linting */
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["vite.config.ts"]
+}
+</file>
+
+<file path="vite.config.ts">
+import react from '@vitejs/plugin-react'
+import { defineConfig } from 'vite'
+
+// https://vite.dev/config/
+export default defineConfig({
+  plugins: [react()],
+})
+</file>
+
+<file path="src/pages/Home.tsx">
+import React from 'react';
+import { Link } from 'react-router-dom';
+
+export const Home: React.FC = () => {
+  return (
+    <div style={{ maxWidth: '1080px', margin: '2rem auto 4rem', padding: '0 1.5rem', fontFamily: 'var(--font-display)' }}>
+      {/* 1. HERO: Technical Overview & Posture Assessment Diagram */}
+      <section style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+        gap: '2.5rem',
+        alignItems: 'center',
+        marginBottom: '4rem',
+        borderBottom: '1px solid var(--ink-border)',
+        paddingBottom: '3.5rem'
+      }}>
+        {/* Left Side: Copy & Route Actions */}
+        <div>
+          <div style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: '0.75rem',
+            letterSpacing: '0.1em',
+            color: 'var(--ink-muted)',
+            marginBottom: '0.75rem'
+          }}>
+            ON-DEVICE ERGONOMIC MONITORING
+          </div>
+
+          <h1 style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: '2.35rem',
+            fontWeight: 600,
+            lineHeight: 1.15,
+            letterSpacing: '-0.02em',
+            color: 'var(--ink-text)',
+            margin: '0 0 1rem'
+          }}>
+            Real-time postural angle analysis on your machine.
+          </h1>
+
+          <p style={{
+            color: 'var(--ink-muted)',
+            fontSize: '1rem',
+            lineHeight: 1.6,
+            margin: '0 0 2rem',
+            maxWidth: '520px'
+          }}>
+            A zero-server ergonomics loop running on your hardware: Tab 1 runs continuous vision inference, emitting low-latency posture events over BroadcastChannel to Tab 2.
+          </p>
+
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.85rem' }}>
+            <Link to="/dashboard" className="btn btn-primary">
+              Open Posture Dashboard
+            </Link>
+            <Link to="/demo" className="btn btn-secondary">
+              Open Demo Workspace
+            </Link>
+          </div>
+        </div>
+
+        {/* Right Side: Static SVG Technical Assessment Diagram */}
+        <div style={{
+          backgroundColor: 'var(--ink-panel)',
+          border: '1px solid var(--ink-border)',
+          borderRadius: '4px',
+          padding: '1.5rem',
+          display: 'flex',
+          flexDirection: 'column'
+        }}>
+          <div className="panel-header" style={{ marginBottom: '1rem' }}>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', letterSpacing: '0.06em', color: 'var(--ink-text)' }}>
+              ANGULAR DEFLECTION SCHEMA
+            </span>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--ink-muted)' }}>
+              REF: ISO 9241-5
+            </span>
+          </div>
+
+          <div style={{ width: '100%', display: 'flex', justifyContent: 'center' }}>
+            <svg
+              viewBox="0 0 460 260"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+              style={{ width: '100%', height: 'auto', display: 'block' }}
+            >
+              <defs>
+                {/* Dash pattern for vertical reference plumb lines */}
+                <marker
+                  id="arc-arrow"
+                  markerWidth="6"
+                  markerHeight="6"
+                  refX="5"
+                  refY="3"
+                  orient="auto"
+                >
+                  <path d="M1 1L5 3L1 5" fill="none" stroke="var(--signal-alert)" strokeWidth="1" />
+                </marker>
+              </defs>
+
+              {/* ---------------- LEFT FIGURE (Upright, Good Posture) ---------------- */}
+              <g id="figure-upright">
+                {/* Status Label Above */}
+                <text
+                  x="115"
+                  y="28"
+                  textAnchor="middle"
+                  fill="var(--signal-good)"
+                  fontFamily="var(--font-mono)"
+                  fontSize="11"
+                  fontWeight="600"
+                  letterSpacing="0.08em"
+                >
+                  [ GOOD ]
+                </text>
+
+                {/* Vertical Plumb Line (dashed) running through ear & shoulder */}
+                <line
+                  x1="115"
+                  y1="52"
+                  x2="115"
+                  y2="208"
+                  stroke="var(--signal-good)"
+                  strokeWidth="1.2"
+                  strokeDasharray="3 3"
+                  opacity="0.85"
+                />
+
+                {/* Chair Seat & Backrest Reference (hairline) */}
+                <path
+                  d="M 50 160 L 50 205 L 145 205"
+                  stroke="var(--ink-border)"
+                  strokeWidth="1"
+                  fill="none"
+                />
+
+                {/* Seated Figure Skeleton (Upright) */}
+                {/* Head (Profile Circle) */}
+                <circle
+                  cx="115"
+                  cy="70"
+                  r="16"
+                  stroke="var(--ink-text)"
+                  strokeWidth="1.75"
+                  fill="none"
+                />
+                {/* Ear Point (Joint Dot) */}
+                <circle cx="115" cy="73" r="2.5" fill="var(--signal-good)" />
+
+                {/* Neck & Spine Path */}
+                <path
+                  d="M 115 86 L 115 110 L 105 168 L 105 202 L 148 202"
+                  stroke="var(--ink-text)"
+                  strokeWidth="1.75"
+                  fill="none"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+
+                {/* Shoulder & Arm (Relaxed) */}
+                <circle cx="115" cy="110" r="2.5" fill="var(--signal-good)" />
+                <path
+                  d="M 115 110 L 126 150 L 146 150"
+                  stroke="var(--ink-text)"
+                  strokeWidth="1.5"
+                  fill="none"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <circle cx="126" cy="150" r="2" fill="var(--ink-muted)" />
+
+                {/* Hip Joint Dot */}
+                <circle cx="105" cy="202" r="2.5" fill="var(--ink-muted)" />
+
+                {/* Angle Metric Below */}
+                <text
+                  x="115"
+                  y="235"
+                  textAnchor="middle"
+                  fill="var(--signal-good)"
+                  fontFamily="var(--font-mono)"
+                  fontSize="13"
+                  fontWeight="600"
+                >
+                  0°
+                </text>
+                <text
+                  x="115"
+                  y="248"
+                  textAnchor="middle"
+                  fill="var(--ink-muted)"
+                  fontFamily="var(--font-mono)"
+                  fontSize="9.5"
+                  letterSpacing="0.04em"
+                >
+                  DEVIATION
+                </text>
+              </g>
+
+              {/* Dividing Hairline Rule */}
+              <line
+                x1="230"
+                y1="35"
+                x2="230"
+                y2="235"
+                stroke="var(--ink-border)"
+                strokeWidth="1"
+                strokeDasharray="2 4"
+              />
+
+              {/* ---------------- RIGHT FIGURE (Forward Lean, Slouching) ---------------- */}
+              <g id="figure-slouching">
+                {/* Status Label Above */}
+                <text
+                  x="345"
+                  y="28"
+                  textAnchor="middle"
+                  fill="var(--signal-alert)"
+                  fontFamily="var(--font-mono)"
+                  fontSize="11"
+                  fontWeight="600"
+                  letterSpacing="0.08em"
+                >
+                  [ SLOUCHING · SEV 2 ]
+                </text>
+
+                {/* Chair Seat & Backrest Reference (hairline) */}
+                <path
+                  d="M 280 160 L 280 205 L 375 205"
+                  stroke="var(--ink-border)"
+                  strokeWidth="1"
+                  fill="none"
+                />
+
+                {/* Vertical Reference Plumb Line at Shoulder (dashed) */}
+                <line
+                  x1="340"
+                  y1="52"
+                  x2="340"
+                  y2="208"
+                  stroke="var(--ink-border)"
+                  strokeWidth="1.2"
+                  strokeDasharray="3 3"
+                />
+
+                {/* Deflection Ray (dashed) following actual ear position to shoulder */}
+                <line
+                  x1="375"
+                  y1="68"
+                  x2="340"
+                  y2="120"
+                  stroke="var(--signal-alert)"
+                  strokeWidth="1.2"
+                  strokeDasharray="3 3"
+                />
+
+                {/* Deflection Arc between Vertical and Deflection Ray */}
+                <path
+                  d="M 340 76 A 44 44 0 0 1 364 84"
+                  stroke="var(--signal-alert)"
+                  strokeWidth="1.2"
+                  fill="none"
+                  markerEnd="url(#arc-arrow)"
+                />
+
+                {/* Angular Degree Label at Arc */}
+                <text
+                  x="376"
+                  y="92"
+                  fill="var(--signal-alert)"
+                  fontFamily="var(--font-mono)"
+                  fontSize="11.5"
+                  fontWeight="600"
+                >
+                  34°
+                </text>
+
+                {/* Seated Figure Skeleton (Slouching / Forward Head) */}
+                {/* Head (Profile Circle - shifted forward and downward) */}
+                <circle
+                  cx="375"
+                  cy="68"
+                  r="16"
+                  stroke="var(--ink-text)"
+                  strokeWidth="1.75"
+                  fill="none"
+                />
+                {/* Ear Point (Joint Dot) */}
+                <circle cx="375" cy="71" r="2.5" fill="var(--signal-alert)" />
+
+                {/* Neck & Kyphotic Spine Path */}
+                <path
+                  d="M 368 83 Q 346 102 340 120 Q 320 156 332 202 L 375 202"
+                  stroke="var(--ink-text)"
+                  strokeWidth="1.75"
+                  fill="none"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+
+                {/* Shoulder Joint Dot (protracted forward) */}
+                <circle cx="340" cy="120" r="2.5" fill="var(--signal-alert)" />
+
+                {/* Reaching Arm */}
+                <path
+                  d="M 340 120 L 362 160 L 388 160"
+                  stroke="var(--ink-text)"
+                  strokeWidth="1.5"
+                  fill="none"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <circle cx="362" cy="160" r="2" fill="var(--ink-muted)" />
+
+                {/* Hip Joint Dot */}
+                <circle cx="332" cy="202" r="2.5" fill="var(--ink-muted)" />
+
+                {/* Angle Metric Below */}
+                <text
+                  x="345"
+                  y="235"
+                  textAnchor="middle"
+                  fill="var(--signal-alert)"
+                  fontFamily="var(--font-mono)"
+                  fontSize="13"
+                  fontWeight="600"
+                >
+                  +34°
+                </text>
+                <text
+                  x="345"
+                  y="248"
+                  textAnchor="middle"
+                  fill="var(--ink-muted)"
+                  fontFamily="var(--font-mono)"
+                  fontSize="9.5"
+                  letterSpacing="0.04em"
+                >
+                  DEFLECTION
+                </text>
+              </g>
+            </svg>
+          </div>
+        </div>
+      </section>
+
+      {/* 2. ARCHITECTURE HEADER */}
+      <section style={{ marginBottom: '2rem' }}>
+        <div style={{
+          fontFamily: 'var(--font-mono)',
+          fontSize: '0.75rem',
+          letterSpacing: '0.1em',
+          color: 'var(--ink-muted)',
+          marginBottom: '0.5rem'
+        }}>
+          TWO TABS, ONE CHANNEL
+        </div>
+        <h2 style={{
+          fontFamily: 'var(--font-display)',
+          fontSize: '1.45rem',
+          fontWeight: 600,
+          lineHeight: 1.35,
+          color: 'var(--ink-text)',
+          margin: 0,
+          maxWidth: '720px'
+        }}>
+          A zero-server ergonomics loop running on your hardware: Tab 1 runs continuous vision inference, emitting low-latency posture events over BroadcastChannel to Tab 2.
+        </h2>
+      </section>
+
+      {/* 3. SVG TECHNICAL ARCHITECTURE DIAGRAM */}
+      <section style={{
+        marginBottom: '3rem',
+        border: '1px solid var(--ink-border)',
+        backgroundColor: 'var(--ink-panel)',
+        borderRadius: '4px',
+        padding: '1.75rem 1.25rem'
+      }}>
+        <div style={{ width: '100%', overflowX: 'auto' }}>
+          <svg
+            viewBox="0 0 800 120"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+            style={{ width: '100%', minWidth: '640px', height: 'auto', display: 'block' }}
+          >
+            <defs>
+              <marker
+                id="diagram-arrow"
+                markerWidth="8"
+                markerHeight="8"
+                refX="6"
+                refY="4"
+                orient="auto"
+              >
+                <path d="M1 1L7 4L1 7" fill="none" stroke="#8CA6BC" strokeWidth="1.2" />
+              </marker>
+            </defs>
+
+            {/* Dashboard Tab Node */}
+            <rect
+              x="20"
+              y="20"
+              width="230"
+              height="80"
+              rx="2"
+              fill="#0F2138"
+              stroke="#2C4A66"
+              strokeWidth="1"
+            />
+            <text x="35" y="44" fill="#8CA6BC" fontSize="11" fontFamily="var(--font-mono)" letterSpacing="0.05em">
+              TAB 01 : DASHBOARD
+            </text>
+            <text x="35" y="66" fill="#E7EEF3" fontSize="13" fontFamily="var(--font-display)" fontWeight="600">
+              Webcam Feed + MediaPipe
+            </text>
+            <text x="35" y="84" fill="#8CA6BC" fontSize="11" fontFamily="var(--font-mono)">
+              Angles & Landmark Engine
+            </text>
+
+            {/* Interconnecting Arrow Line */}
+            <line
+              x1="250"
+              y1="60"
+              x2="540"
+              y2="60"
+              stroke="#2C4A66"
+              strokeWidth="1.5"
+              strokeDasharray="4 4"
+            />
+            <line
+              x1="340"
+              y1="60"
+              x2="450"
+              y2="60"
+              stroke="#8CA6BC"
+              strokeWidth="1"
+              markerEnd="url(#diagram-arrow)"
+            />
+
+            {/* Channel Protocol Label */}
+            <rect
+              x="320"
+              y="32"
+              width="150"
+              height="22"
+              rx="2"
+              fill="#16304A"
+              stroke="#2C4A66"
+              strokeWidth="1"
+            />
+            <text
+              x="395"
+              y="47"
+              textAnchor="middle"
+              fill="#4FD8C4"
+              fontSize="10"
+              fontFamily="var(--font-mono)"
+              letterSpacing="0.08em"
+            >
+              BroadcastChannel
+            </text>
+            <text
+              x="395"
+              y="80"
+              textAnchor="middle"
+              fill="#8CA6BC"
+              fontSize="10"
+              fontFamily="var(--font-mono)"
+            >
+              posturesync (same-origin)
+            </text>
+
+            {/* Demo Tab Node */}
+            <rect
+              x="550"
+              y="20"
+              width="230"
+              height="80"
+              rx="2"
+              fill="#0F2138"
+              stroke="#2C4A66"
+              strokeWidth="1"
+            />
+            <text x="565" y="44" fill="#8CA6BC" fontSize="11" fontFamily="var(--font-mono)" letterSpacing="0.05em">
+              TAB 02 : DEMO ROUTE
+            </text>
+            <text x="565" y="66" fill="#E7EEF3" fontSize="13" fontFamily="var(--font-display)" fontWeight="600">
+              Quiet Place Workspace
+            </text>
+            <text x="565" y="84" fill="#8CA6BC" fontSize="11" fontFamily="var(--font-mono)">
+              Degradation & Blur Reaction
+            </text>
+          </svg>
+        </div>
+      </section>
+
+      {/* 4. TWO FLAT PANELS (Describing what each tab does) */}
+      <section style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+        gap: '1.5rem',
+        marginBottom: '3.5rem'
+      }}>
+        {/* Panel A: Dashboard */}
+        <div className="glass-panel" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+          <div>
+            <div className="panel-header">
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', letterSpacing: '0.08em', color: 'var(--ink-muted)' }}>
+                INSTRUMENT PANEL
+              </span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--ink-muted)' }}>
+                PORT : 01
+              </span>
+            </div>
+            <h3 style={{ fontSize: '1.15rem', fontWeight: 600, color: 'var(--ink-text)', margin: '0 0 0.5rem' }}>
+              Tab 1: Vision Dashboard
+            </h3>
+            <p style={{ color: 'var(--ink-muted)', fontSize: '0.875rem', lineHeight: 1.6, margin: '0 0 1.5rem' }}>
+              Captures live local video, runs real-time MediaPipe body and facial landmark models, computes angular cervical deflection, and broadcasts state payloads.
+            </p>
+          </div>
+          <Link to="/dashboard" className="btn btn-primary" style={{ width: '100%' }}>
+            Open Dashboard Panel
+          </Link>
+        </div>
+
+        {/* Panel B: Demo Workspace */}
+        <div className="glass-panel" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+          <div>
+            <div className="panel-header">
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', letterSpacing: '0.08em', color: 'var(--ink-muted)' }}>
+                TARGET CLIENT
+              </span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--ink-muted)' }}>
+                PORT : 02
+              </span>
+            </div>
+            <h3 style={{ fontSize: '1.15rem', fontWeight: 600, color: 'var(--ink-text)', margin: '0 0 0.5rem' }}>
+              Tab 2: Quiet Place Demo
+            </h3>
+            <p style={{ color: 'var(--ink-muted)', fontSize: '0.875rem', lineHeight: 1.6, margin: '0 0 1.5rem' }}>
+              Simulates your everyday workspace. Subscribes to BroadcastChannel telemetry and gently blurs readability when poor posture persists.
+            </p>
+          </div>
+          <Link to="/demo" className="btn btn-secondary" style={{ width: '100%' }}>
+            Open Demo Environment
+          </Link>
+        </div>
+      </section>
+
+      {/* 5. SPECIFICATION LIST (Hairline-rule separated rows) */}
+      <section style={{
+        borderTop: '1px solid var(--ink-border)',
+        paddingTop: '1.5rem'
+      }}>
+        <div style={{
+          fontFamily: 'var(--font-mono)',
+          fontSize: '0.75rem',
+          letterSpacing: '0.1em',
+          color: 'var(--ink-muted)',
+          marginBottom: '1rem'
+        }}>
+          SYSTEM SPECIFICATIONS
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          {[
+            {
+              label: 'PROCESSING ARCHITECTURE',
+              value: '100% on-device inference via WebAssembly & WebGL. Zero network requests.'
+            },
+            {
+              label: 'IMAGE PERSISTENCE',
+              value: 'Zero video or image frames are ever recorded, written to disk, or transmitted.'
+            },
+            {
+              label: 'INTER-PROCESS BUS',
+              value: 'Native browser BroadcastChannel API — zero WebSockets, servers, or cloud dependencies.'
+            },
+            {
+              label: 'EXTENSIONS REQUIRED',
+              value: 'None. Operates purely inside modern Chromium, Gecko, or WebKit browser runtimes.'
+            },
+            {
+              label: 'LATENCY PROFILE',
+              value: 'Sub-35ms frame-to-classification turnaround with exponential moving average smoothing.'
+            }
+          ].map((row, idx) => (
+            <div
+              key={idx}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'minmax(180px, 240px) 1fr',
+                padding: '0.85rem 0',
+                borderBottom: '1px solid var(--ink-border)',
+                alignItems: 'baseline',
+                gap: '1rem'
+              }}
+            >
+              <span style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: '0.75rem',
+                color: 'var(--ink-muted)',
+                letterSpacing: '0.04em'
+              }}>
+                {row.label}
+              </span>
+              <span style={{
+                fontFamily: 'var(--font-display)',
+                fontSize: '0.875rem',
+                color: 'var(--ink-text)',
+                lineHeight: 1.5
+              }}>
+                {row.value}
+              </span>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+};
+</file>
+
+<file path="src/App.tsx">
+import React from 'react';
+import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
+import { Home } from './pages/Home';
+import { Dashboard } from './pages/Dashboard';
+import { Demo } from './pages/Demo';
+import { Activity, LayoutDashboard, Home as HomeIcon } from 'lucide-react';
+
+export const App: React.FC = () => {
+  return (
+    <BrowserRouter>
+      <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+        {/* Navigation Bar */}
+        <header className="top-nav">
+          <NavLink to="/" className="brand-badge">
+            <span className="nav-status-dot" aria-label="Monitoring capability available" />
+            <span>syncPosture</span>
+          </NavLink>
+
+          <nav className="nav-links">
+            <NavLink to="/" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} end>
+              <HomeIcon size={15} />
+              <span>Home</span>
+            </NavLink>
+            <NavLink to="/dashboard" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+              <Activity size={15} />
+              <span>Dashboard</span>
+            </NavLink>
+            <NavLink to="/demo" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+              <LayoutDashboard size={15} />
+              <span>Demo</span>
+            </NavLink>
+          </nav>
+        </header>
+
+        {/* Routes */}
+        <main style={{ flex: 1 }}>
+          <Routes>
+            <Route path="/" element={<Home />} />
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/demo" element={<Demo />} />
+          </Routes>
+        </main>
+      </div>
+    </BrowserRouter>
+  );
+};
+
+export default App;
+</file>
+
+<file path="src/index.css">
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+
+:root {
+  /* Quiet Place Palette */
+  --qp-sage: #DCEBE4;
+  --qp-mint: #EAF3EE;
+  --qp-cream: #F8F3E8;
+  --qp-cream-light: #FCFAF5;
+  --qp-forest: #173B35;
+  --qp-forest-muted: #365B51;
+  --qp-green-muted: #78958B;
+  --qp-coral: #E96F67;
+  --qp-coral-hover: #DC5E56;
+  --qp-coral-soft: #F4A09A;
+  --qp-sand: #EFE8D8;
+  --qp-border: rgba(23, 59, 53, 0.1);
+  --qp-border-light: rgba(23, 59, 53, 0.06);
+
+  /* Spacing rhythm */
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-80: 80px;
+  --space-96: 96px;
+  --space-120: 120px;
+
+  /* Quiet Place Typography */
+  --font-serif: Georgia, 'Times New Roman', Cambria, serif;
+  --font-sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+
+  /* syncPosture Design System Tokens */
+  --ink-bg: #0F2138;
+  --ink-panel: #16304A;
+  --ink-border: #2C4A66;
+  --ink-text: #E7EEF3;
+  --ink-muted: #8CA6BC;
+  --signal-alert: #FF6B4A;
+  --signal-good: #4FD8C4;
+
+  --font-display: 'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  /* Legacy variable mappings for backward compatibility */
+  --bg-primary: var(--ink-bg);
+  --bg-secondary: var(--ink-panel);
+  --bg-card: var(--ink-panel);
+  --bg-card-border: var(--ink-border);
+  --text-main: var(--ink-text);
+  --text-muted: var(--ink-muted);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-display);
+  background-color: var(--ink-bg);
+  color: var(--ink-text);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* ==========================================================
+   QUIET PLACE FOUNDATION & LAYOUT SYSTEM (/demo)
+   ========================================================== */
+
+.qp-page {
+  background-color: var(--qp-cream-light);
+  color: var(--qp-forest);
+  font-family: var(--font-sans);
+  min-height: 100vh;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.qp-container {
+  width: 100%;
+  max-width: 1240px;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: var(--space-24);
+  padding-right: var(--space-24);
+}
+
+@media (min-width: 1024px) {
+  .qp-container {
+    padding-left: var(--space-32);
+    padding-right: var(--space-32);
+  }
+}
+
+/* Typography styles for Quiet Place */
+.qp-serif {
+  font-family: var(--font-serif);
+}
+
+.qp-heading-1 {
+  font-family: var(--font-serif);
+  font-size: 2.75rem;
+  line-height: 1.15;
+  font-weight: 400;
+  color: var(--qp-forest);
+  letter-spacing: -0.01em;
+}
+
+.qp-heading-2 {
+  font-family: var(--font-serif);
+  font-size: 2rem;
+  line-height: 1.25;
+  font-weight: 400;
+  color: var(--qp-forest);
+}
+
+.qp-heading-3 {
+  font-family: var(--font-serif);
+  font-size: 1.4rem;
+  line-height: 1.35;
+  font-weight: 400;
+  color: var(--qp-forest);
+}
+
+.qp-body {
+  font-family: var(--font-sans);
+  font-size: 1rem;
+  line-height: 1.65;
+  color: var(--qp-forest-muted);
+}
+
+.qp-body-sm {
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--qp-forest-muted);
+}
+
+/* ==========================================================
+   QUIET PLACE HEADER & NAVIGATION
+   ========================================================== */
+
+.qp-header-wrapper {
+  background-color: var(--qp-cream-light);
+  border-bottom: 1px solid var(--qp-border-light);
+  position: sticky;
+  top: 0;
+  z-index: 30;
+}
+
+.qp-header-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 80px;
+}
+
+/* Logo */
+.qp-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  cursor: pointer;
+  user-select: none;
+}
+
+.qp-brand-mark {
+  width: 34px;
+  height: 34px;
+  background-color: var(--qp-sage);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--qp-forest);
+  transition: transform 0.25s ease, background-color 0.25s ease;
+}
+
+.qp-brand:hover .qp-brand-mark {
+  transform: rotate(8deg);
+  background-color: var(--qp-mint);
+}
+
+.qp-brand-text {
+  font-family: var(--font-serif);
+  font-size: 1.35rem;
+  font-weight: 400;
+  color: var(--qp-forest);
+  letter-spacing: -0.01em;
+}
+
+/* Main Navigation */
+.qp-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-32);
+}
+
+.qp-nav-link {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--qp-forest-muted);
+  position: relative;
+  padding: 6px 0;
+  transition: color 200ms ease;
+}
+
+.qp-nav-link::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 0%;
+  height: 1.5px;
+  background-color: var(--qp-forest);
+  transition: width 200ms ease;
+}
+
+.qp-nav-link:hover {
+  color: var(--qp-forest);
+}
+
+.qp-nav-link:hover::after {
+  width: 100%;
+}
+
+/* Header Right Actions */
+.qp-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-24);
+}
+
+.qp-icon-btn {
+  background: none;
+  border: none;
+  color: var(--qp-forest-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  transition: all 200ms ease;
+}
+
+.qp-icon-btn:hover {
+  color: var(--qp-forest);
+  background-color: var(--qp-sage);
+}
+
+.qp-signin-btn {
+  background: none;
+  border: none;
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--qp-forest);
+  cursor: pointer;
+  padding: 6px var(--space-8);
+  transition: color 200ms ease;
+}
+
+.qp-signin-btn:hover {
+  color: var(--qp-forest-muted);
+}
+
+/* Primary Coral CTA Button */
+.qp-cta-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  background-color: var(--qp-coral);
+  color: #ffffff;
+  padding: 10px var(--space-24);
+  border-radius: 9999px;
+  font-size: 0.925rem;
+  font-weight: 500;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(233, 111, 103, 0.25);
+  transition: transform 200ms ease, background-color 200ms ease, box-shadow 200ms ease;
+}
+
+.qp-cta-btn:hover {
+  background-color: var(--qp-coral-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(233, 111, 103, 0.35);
+}
+
+.qp-cta-btn:active {
+  transform: translateY(0);
+}
+
+/* Mobile Nav Toggle */
+.qp-mobile-toggle {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--qp-forest);
+  cursor: pointer;
+  padding: var(--space-8);
+  border-radius: 6px;
+}
+
+@media (max-width: 860px) {
+  .qp-nav {
+    display: none;
+  }
+  .qp-signin-btn {
+    display: none;
+  }
+  .qp-mobile-toggle {
+    display: flex;
+  }
+  .qp-header-inner {
+    height: 70px;
+  }
+}
+
+@media (max-width: 540px) {
+  .qp-cta-btn {
+    padding: 8px var(--space-16);
+    font-size: 0.85rem;
+  }
+}
+
+/* Mobile dropdown menu */
+.qp-mobile-menu {
+  display: flex;
+  flex-direction: column;
+  background-color: var(--qp-cream-light);
+  border-bottom: 1px solid var(--qp-border);
+  padding: var(--space-16) var(--space-24) var(--space-24);
+  gap: var(--space-16);
+}
+
+.qp-mobile-menu .qp-nav-link {
+  font-size: 1.05rem;
+  padding: var(--space-8) 0;
+  border-bottom: 1px solid var(--qp-border-light);
+}
+
+/* ==========================================================
+   QUIET PLACE HERO SECTION
+   ========================================================== */
+
+.qp-hero-section {
+  padding-top: var(--space-64);
+  padding-bottom: var(--space-64);
+  background-color: var(--qp-cream-light);
+}
+
+.qp-eyebrow {
+  display: inline-block;
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--qp-green-muted);
+  margin-bottom: var(--space-16);
+}
+
+.qp-hero-title {
+  font-family: var(--font-serif);
+  font-size: clamp(2.4rem, 4.2vw, 3.75rem);
+  line-height: 1.15;
+  font-weight: 400;
+  color: var(--qp-forest);
+  letter-spacing: -0.02em;
+  margin-bottom: var(--space-24);
+}
+
+.qp-hero-desc {
+  font-family: var(--font-sans);
+  font-size: clamp(1rem, 1.3vw, 1.15rem);
+  line-height: 1.65;
+  color: var(--qp-forest-muted);
+  max-width: 580px;
+  margin: 0 auto var(--space-32);
+}
+
+.qp-hero-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-16);
+  margin-bottom: var(--space-48);
+  flex-wrap: wrap;
+}
+
+.qp-hero-secondary-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 24px;
+  border-radius: 9999px;
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--qp-forest);
+  background-color: transparent;
+  border: 1px solid var(--qp-border);
+  cursor: pointer;
+  transition: all 200ms ease;
+}
+
+.qp-hero-secondary-btn:hover {
+  background-color: var(--qp-sand);
+  border-color: rgba(23, 59, 53, 0.2);
+  color: var(--qp-forest);
+}
+
+.qp-hero-landscape-wrapper {
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  border-radius: 24px;
+  overflow: hidden;
+  box-shadow: 0 16px 36px -10px rgba(23, 59, 53, 0.12), 0 0 0 1px rgba(23, 59, 53, 0.05);
+}
+
+.qp-landscape-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* ==========================================================
+   QUIET PLACE FEATURES / PHILOSOPHY SECTION
+   ========================================================== */
+
+.qp-features-section {
+  padding-top: var(--space-80);
+  padding-bottom: var(--space-96);
+  background-color: var(--qp-cream-light);
+}
+
+.qp-features-header {
+  text-align: center;
+  max-width: 680px;
+  margin: 0 auto var(--space-64);
+}
+
+.qp-features-title {
+  font-family: var(--font-serif);
+  font-size: clamp(2rem, 3.2vw, 2.75rem);
+  line-height: 1.2;
+  font-weight: 400;
+  color: var(--qp-forest);
+  margin-bottom: var(--space-16);
+  letter-spacing: -0.01em;
+}
+
+.qp-features-subtitle {
+  font-family: var(--font-sans);
+  font-size: 1.05rem;
+  line-height: 1.65;
+  color: var(--qp-forest-muted);
+}
+
+.qp-features-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-24);
+}
+
+@media (max-width: 960px) {
+  .qp-features-grid {
+    grid-template-columns: 1fr;
+    gap: var(--space-24);
+  }
+}
+
+.qp-feature-card {
+  padding: var(--space-32) var(--space-32) var(--space-48);
+  border-radius: 20px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 280px;
+  border: 1px solid var(--qp-border);
+  transition: transform 250ms ease, box-shadow 250ms ease, border-color 250ms ease;
+  position: relative;
+  cursor: pointer;
+}
+
+.qp-feature-card-cream {
+  background-color: var(--qp-cream);
+}
+
+.qp-feature-card-mint {
+  background-color: var(--qp-mint);
+}
+
+.qp-feature-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 24px -6px rgba(23, 59, 53, 0.08);
+  border-color: rgba(23, 59, 53, 0.2);
+}
+
+.qp-feature-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-32);
+}
+
+.qp-feature-number {
+  font-family: var(--font-serif);
+  font-size: 1.15rem;
+  color: var(--qp-green-muted);
+  font-weight: 400;
+}
+
+.qp-feature-icon-box {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background-color: var(--qp-sage);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--qp-forest);
+  transition: background-color 200ms ease, transform 200ms ease;
+}
+
+.qp-feature-card:hover .qp-feature-icon-box {
+  background-color: #ffffff;
+  transform: scale(1.05);
+}
+
+.qp-feature-card-title {
+  font-family: var(--font-serif);
+  font-size: 1.45rem;
+  font-weight: 400;
+  color: var(--qp-forest);
+  margin-bottom: var(--space-12);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: color 200ms ease;
+}
+
+.qp-feature-card:hover .qp-feature-card-title {
+  color: var(--qp-coral);
+}
+
+.qp-feature-arrow {
+  color: var(--qp-green-muted);
+  opacity: 0.6;
+  transform: translate(0, 0);
+  transition: all 200ms ease;
+}
+
+.qp-feature-card:hover .qp-feature-arrow {
+  opacity: 1;
+  color: var(--qp-coral);
+  transform: translate(2px, -2px);
+}
+
+.qp-feature-card-desc {
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: var(--qp-forest-muted);
+}
+
+/* ==========================================================
+   QUIET PLACE DISCOVERY SECTION
+   ========================================================== */
+
+.qp-discovery-section {
+  padding-top: var(--space-80);
+  padding-bottom: var(--space-96);
+  background-color: var(--qp-cream);
+}
+
+.qp-discovery-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-bottom: var(--space-48);
+  flex-wrap: wrap;
+  gap: var(--space-24);
+}
+
+.qp-view-all-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--qp-forest);
+  padding: 6px 0;
+  transition: color 200ms ease, transform 200ms ease;
+}
+
+.qp-view-all-link:hover {
+  color: var(--qp-coral);
+  transform: translateX(3px);
+}
+
+.qp-discovery-grid {
+  display: grid;
+  grid-template-columns: 1.15fr 0.85fr;
+  grid-template-rows: auto auto;
+  gap: var(--space-24);
+}
+
+.qp-discovery-subgrid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-24);
+}
+
+.qp-place-card {
+  background-color: var(--qp-cream-light);
+  border: 1px solid var(--qp-border);
+  border-radius: 18px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: transform 250ms ease, box-shadow 250ms ease, border-color 250ms ease;
+  cursor: pointer;
+}
+
+.qp-place-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 28px -8px rgba(23, 59, 53, 0.08);
+  border-color: rgba(23, 59, 53, 0.2);
+}
+
+.qp-place-img-box {
+  width: 100%;
+  overflow: hidden;
+  background-color: var(--qp-mint);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.qp-card-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  transition: transform 350ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.qp-place-card:hover .qp-card-svg {
+  transform: scale(1.02);
+}
+
+.qp-place-meta {
+  padding: var(--space-24) var(--space-24) var(--space-32);
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.qp-place-category {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--qp-green-muted);
+  text-transform: uppercase;
+  margin-bottom: var(--space-8);
+}
+
+.qp-place-title {
+  font-family: var(--font-serif);
+  font-size: 1.35rem;
+  font-weight: 400;
+  color: var(--qp-forest);
+  margin-bottom: var(--space-8);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: color 200ms ease;
+}
+
+.qp-place-card:hover .qp-place-title {
+  color: var(--qp-coral);
+}
+
+.qp-place-arrow {
+  color: var(--qp-green-muted);
+  opacity: 0.6;
+  transition: all 200ms ease;
+}
+
+.qp-place-card:hover .qp-place-arrow {
+  opacity: 1;
+  color: var(--qp-coral);
+  transform: translate(2px, -2px);
+}
+
+.qp-place-desc {
+  font-size: 0.925rem;
+  line-height: 1.55;
+  color: var(--qp-forest-muted);
+}
+
+.qp-place-wide {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 900px) {
+  .qp-discovery-grid {
+    grid-template-columns: 1fr;
+  }
+  .qp-place-wide {
+    grid-column: auto;
+  }
+}
+
+/* ==========================================================
+   QUIET PLACE JOURNAL SECTION
+   ========================================================== */
+
+.qp-journal-section {
+  padding-top: var(--space-80);
+  padding-bottom: var(--space-96);
+  background-color: var(--qp-mint);
+}
+
+.qp-journal-header {
+  margin-bottom: var(--space-48);
+}
+
+.qp-journal-grid {
+  display: grid;
+  grid-template-columns: 1.15fr 0.85fr;
+  gap: var(--space-32);
+}
+
+@media (max-width: 960px) {
+  .qp-journal-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.qp-journal-card {
+  background-color: var(--qp-cream-light);
+  border: 1px solid var(--qp-border);
+  border-radius: 18px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: transform 250ms ease, box-shadow 250ms ease, border-color 250ms ease;
+  cursor: pointer;
+}
+
+.qp-journal-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 14px 28px -8px rgba(23, 59, 53, 0.08);
+  border-color: rgba(23, 59, 53, 0.2);
+}
+
+.qp-journal-featured-art {
+  width: 100%;
+  overflow: hidden;
+  background-color: var(--qp-sand);
+}
+
+.qp-journal-card:hover .qp-journal-featured-art svg {
+  transform: scale(1.02);
+}
+
+.qp-journal-side-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-24);
+}
+
+.qp-journal-content {
+  padding: var(--space-32);
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.qp-journal-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-16);
+  margin-bottom: var(--space-12);
+}
+
+.qp-journal-cat {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--qp-green-muted);
+  text-transform: uppercase;
+}
+
+.qp-journal-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.8rem;
+  color: var(--qp-forest-muted);
+}
+
+.qp-journal-title {
+  font-family: var(--font-serif);
+  font-size: 1.35rem;
+  line-height: 1.35;
+  font-weight: 400;
+  color: var(--qp-forest);
+  margin-bottom: var(--space-12);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-12);
+  transition: color 200ms ease;
+}
+
+.qp-journal-featured-title {
+  font-size: 1.7rem;
+}
+
+.qp-journal-card:hover .qp-journal-title {
+  color: var(--qp-coral);
+}
+
+.qp-journal-arrow {
+  color: var(--qp-green-muted);
+  opacity: 0.6;
+  flex-shrink: 0;
+  margin-top: 4px;
+  transition: all 200ms ease;
+}
+
+.qp-journal-card:hover .qp-journal-arrow {
+  opacity: 1;
+  color: var(--qp-coral);
+  transform: translate(2px, -2px);
+}
+
+.qp-journal-excerpt {
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: var(--qp-forest-muted);
+}
+
+/* ==========================================================
+   QUIET PLACE FINAL CTA SECTION
+   ========================================================== */
+
+.qp-cta-section {
+  padding-top: var(--space-48);
+  padding-bottom: var(--space-80);
+  background-color: var(--qp-mint);
+}
+
+.qp-cta-box {
+  background-color: var(--qp-forest);
+  border-radius: 24px;
+  position: relative;
+  overflow: hidden;
+  padding: var(--space-80) var(--space-32);
+  text-align: center;
+  box-shadow: 0 20px 40px -12px rgba(23, 59, 53, 0.25);
+}
+
+.qp-cta-decor {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  width: 100%;
+  height: 100%;
+}
+
+.qp-cta-inner {
+  position: relative;
+  z-index: 2;
+  max-width: 620px;
+  margin: 0 auto;
+}
+
+.qp-cta-title {
+  font-family: var(--font-serif);
+  font-size: clamp(2rem, 3.5vw, 2.75rem);
+  line-height: 1.2;
+  font-weight: 400;
+  color: #FCFAF5;
+  letter-spacing: -0.01em;
+  margin-bottom: var(--space-16);
+}
+
+.qp-cta-desc {
+  font-family: var(--font-sans);
+  font-size: 1.1rem;
+  line-height: 1.6;
+  color: var(--qp-sage);
+  margin-bottom: var(--space-32);
+}
+
+.qp-cta-btn-large {
+  padding: 13px 32px;
+  font-size: 1rem;
+}
+
+/* ==========================================================
+   QUIET PLACE FOOTER SECTION
+   ========================================================== */
+
+.qp-footer-wrapper {
+  background-color: var(--qp-cream-light);
+  border-top: 1px solid var(--qp-border);
+  padding-top: var(--space-64);
+  padding-bottom: var(--space-48);
+}
+
+.qp-footer-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-48);
+  margin-bottom: var(--space-48);
+  flex-wrap: wrap;
+}
+
+.qp-footer-brand-col {
+  max-width: 380px;
+}
+
+.qp-footer-tagline {
+  font-size: 0.925rem;
+  line-height: 1.6;
+  color: var(--qp-forest-muted);
+}
+
+.qp-footer-links-grid {
+  display: flex;
+  gap: var(--space-64);
+}
+
+@media (max-width: 640px) {
+  .qp-footer-links-grid {
+    gap: var(--space-32);
+  }
+}
+
+.qp-footer-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+.qp-footer-col-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--qp-forest);
+  margin-bottom: var(--space-4);
+}
+
+.qp-footer-link {
+  font-size: 0.925rem;
+  color: var(--qp-forest-muted);
+  transition: color 150ms ease;
+}
+
+.qp-footer-link:hover {
+  color: var(--qp-forest);
+}
+
+.qp-footer-bottom {
+  border-top: 1px solid var(--qp-border-light);
+  padding-top: var(--space-24);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-16);
+}
+
+.qp-footer-copy {
+  font-size: 0.85rem;
+  color: var(--qp-green-muted);
+}
+
+.qp-footer-meta-pill {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--qp-green-muted);
+  background-color: var(--qp-sand);
+  padding: 4px 10px;
+  border-radius: 9999px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ==========================================================
+   DEGRADATION & BLUR INTERVENTION STYLING
+   ========================================================== */
+
+.demo-content-wrapper {
+  transition: filter 0.6s cubic-bezier(0.16, 1, 0.3, 1), transform 0.6s ease;
+  position: relative;
+  flex: 1;
+}
+
+.demo-content-wrapper.blurred {
+  filter: blur(14px) brightness(0.7) saturate(0.8);
+  pointer-events: none;
+  user-select: none;
+}
+
+.intervention-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle, transparent 40%, rgba(233, 111, 103, 0.35) 100%);
+  animation: pulse-vignette 2.4s infinite alternate ease-in-out;
+}
+
+@keyframes pulse-vignette {
+  0% {
+    background: radial-gradient(circle, transparent 45%, rgba(233, 111, 103, 0.2) 100%);
+  }
+  100% {
+    background: radial-gradient(circle, transparent 35%, rgba(233, 111, 103, 0.45) 100%);
+  }
+}
+
+/* ==========================================================
+   APP SHELL / DASHBOARD STYLING (Technical Instrument Panel)
+   ========================================================== */
+
+/* Flat technical panel: 1px hairline border, max 4px radius, no blur/glow */
+.glass-panel {
+  background: var(--ink-panel);
+  border: 1px solid var(--ink-border);
+  border-radius: 4px;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* Technical top navigation */
+.top-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1.5rem;
+  border-bottom: 1px solid var(--ink-border);
+  background: var(--ink-bg);
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  font-family: var(--font-display);
+}
+
+/* Technical brand badge - plain font-mono wordmark in --ink-text */
+.brand-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: 1rem;
+  letter-spacing: -0.02em;
+  color: var(--ink-text);
+  background: none;
+  -webkit-background-clip: unset;
+  -webkit-text-fill-color: var(--ink-text);
+  text-decoration: none;
+}
+
+/* Status indicator: 6px dot in --signal-good with subtle pulse */
+.nav-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--signal-good);
+  display: inline-block;
+  animation: pulse-status 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse-status {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.85);
+  }
+}
+
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+/* Nav links: 1px bottom-border underline on hover/active, --font-display, no background fill */
+.nav-link {
+  padding: 0.4rem 0;
+  border-radius: 0;
+  border: none;
+  border-bottom: 1px solid transparent;
+  font-family: var(--font-display);
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--ink-muted);
+  background: transparent !important;
+  transition: color 0.15s ease, border-color 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.nav-link:hover {
+  color: var(--ink-text);
+  border-bottom-color: var(--ink-text);
+}
+
+.nav-link.active {
+  color: var(--ink-text);
+  border-bottom-color: var(--ink-text);
+}
+
+.nav-link svg {
+  color: var(--ink-muted);
+  transition: color 0.15s ease;
+}
+
+.nav-link:hover svg,
+.nav-link.active svg {
+  color: var(--ink-text);
+}
+
+/* Technical buttons: flat, 1px border, max 4px radius, no gradients, no glows */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-family: var(--font-display);
+  font-size: 0.85rem;
+  font-weight: 600;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: opacity 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+  box-shadow: none;
+  text-decoration: none;
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Primary = solid --ink-text background with --ink-bg text (inverted, high contrast) */
+.btn-primary {
+  background: var(--ink-text);
+  color: var(--ink-bg);
+  border-color: var(--ink-text);
+  box-shadow: none;
+}
+
+.btn-primary:hover:not(:disabled) {
+  transform: none;
+  box-shadow: none;
+  opacity: 0.92;
+}
+
+/* Secondary = transparent with --ink-border outline */
+.btn-secondary {
+  background: transparent;
+  color: var(--ink-text);
+  border-color: var(--ink-border);
+  box-shadow: none;
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--ink-panel);
+  border-color: var(--ink-border);
+  color: var(--ink-text);
+}
+
+/* Destructive/alert actions use --signal-alert as a solid fill */
+.btn-danger {
+  background: var(--signal-alert);
+  color: #FFFFFF;
+  border-color: var(--signal-alert);
+  box-shadow: none;
+}
+
+.btn-danger:hover:not(:disabled) {
+  transform: none;
+  box-shadow: none;
+  opacity: 0.92;
+}
+
+/* General Technical Instrument Panel Utilities */
+.text-mono {
+  font-family: var(--font-mono);
+}
+
+.text-display {
+  font-family: var(--font-display);
+}
+
+.signal-alert {
+  color: var(--signal-alert);
+}
+
+.signal-good {
+  color: var(--signal-good);
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 0.75rem;
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid var(--ink-border);
+  font-family: var(--font-display);
+}
+</file>
+
+<file path="src/pages/Dashboard.tsx">
+import React, { useEffect, useState } from 'react';
+import { send, onMessage } from '../lib/channel';
+import type { SyncMessage } from '../types/messages';
+import { useVisionFeed } from '../lib/hooks/useVisionFeed';
+import { ShieldAlert } from 'lucide-react';
+
+export const Dashboard: React.FC = () => {
+  const {
+    videoRef,
+    canvasRef,
+    cameraActive,
+    cameraError,
+    pipelineReady,
+    pipelineLoading,
+    pipelineError,
+    poseDetected,
+    measuredFps,
+    postureMetrics,
+    postureClassification
+  } = useVisionFeed({ active: true });
+
+  // Broadcast Log State
+  const [lastSentMessage, setLastSentMessage] = useState<string>('None yet');
+  const [receivedMessages, setReceivedMessages] = useState<string[]>([]);
+
+  // Listen for cross-tab messages (e.g., DEMO_READY)
+  useEffect(() => {
+    const unsubscribe = onMessage((msg: SyncMessage) => {
+      const timestamp = new Date().toLocaleTimeString();
+      setReceivedMessages((prev) => [
+        `[${timestamp}] Received: ${msg.type} ${JSON.stringify(msg)}`,
+        ...prev.slice(0, 9)
+      ]);
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  const handleSendTestSignal = () => {
+    const msg: SyncMessage = {
+      type: 'POSTURE_STATUS',
+      status: 'slouching',
+      severity: 2
+    };
+    send(msg);
+    setLastSentMessage(`POSTURE_STATUS (slouching, severity: 2) at ${new Date().toLocaleTimeString()}`);
+  };
+
+  const handleSendClear = () => {
+    const msg: SyncMessage = {
+      type: 'CLEAR_INTERVENTION'
+    };
+    send(msg);
+    setLastSentMessage(`CLEAR_INTERVENTION at ${new Date().toLocaleTimeString()}`);
+  };
+
+  return (
+    <div style={{ maxWidth: '1240px', margin: '2rem auto 4rem', padding: '0 1.5rem', fontFamily: 'var(--font-display)' }}>
+      {/* Header bar */}
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem', borderBottom: '1px solid var(--ink-border)', paddingBottom: '1rem' }}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', flexWrap: 'wrap' }}>
+            <h1 style={{ fontSize: '1.4rem', fontWeight: 600, color: 'var(--ink-text)', margin: 0 }}>
+              POSTURE MONITOR READOUT
+            </h1>
+
+            {/* Status indicators: plain --font-mono labels preceded by small square indicator */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', fontFamily: 'var(--font-mono)', fontSize: '0.75rem', letterSpacing: '0.04em' }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem', color: cameraActive ? 'var(--ink-text)' : 'var(--ink-muted)' }}>
+                <span style={{
+                  width: '6px',
+                  height: '6px',
+                  backgroundColor: cameraActive ? 'var(--signal-good)' : 'var(--signal-alert)',
+                  display: 'inline-block'
+                }} />
+                {cameraActive ? 'CAMERA: LIVE' : 'CAMERA: OFF'}
+              </span>
+
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem', color: pipelineReady ? 'var(--ink-text)' : 'var(--ink-muted)' }}>
+                <span style={{
+                  width: '6px',
+                  height: '6px',
+                  backgroundColor: pipelineReady ? 'var(--signal-good)' : pipelineLoading ? 'var(--ink-muted)' : 'var(--signal-alert)',
+                  display: 'inline-block'
+                }} />
+                {pipelineReady ? 'MEDIAPIPE: READY' : pipelineLoading ? 'MEDIAPIPE: INITIALIZING' : 'MEDIAPIPE: ERROR'}
+              </span>
+            </div>
+          </div>
+
+          <p style={{ color: 'var(--ink-muted)', fontSize: '0.8rem', fontFamily: 'var(--font-mono)', marginTop: '0.5rem', margin: 0 }}>
+            BROADCAST CHANNEL : <span style={{ color: 'var(--ink-text)' }}>posturesync</span> (same-origin)
+          </p>
+        </div>
+      </div>
+
+      {/* Main 2-Column Grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.35fr) minmax(0, 1fr)', gap: '1.5rem' }}>
+        {/* Left Column: Live Webcam View with Canvas Landmark Overlay */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          <div className="glass-panel" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column' }}>
+            <div className="panel-header" style={{ marginBottom: '1rem' }}>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', letterSpacing: '0.06em', color: 'var(--ink-text)' }}>
+                OPTICAL FEED // GEOMETRY OVERLAY
+              </span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--ink-muted)' }}>
+                LOCAL WASM
+              </span>
+            </div>
+
+            <div style={{
+              position: 'relative',
+              width: '100%',
+              backgroundColor: '#071220',
+              borderRadius: '2px',
+              overflow: 'hidden',
+              aspectRatio: '16 / 9',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              border: '1px solid var(--ink-border)'
+            }}>
+              {cameraError ? (
+                <div style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--signal-alert)' }}>
+                  <ShieldAlert size={32} style={{ margin: '0 auto 0.5rem' }} />
+                  <p style={{ fontWeight: 600, fontFamily: 'var(--font-mono)', fontSize: '0.85rem' }}>CAMERA ACCESS ERROR</p>
+                  <p style={{ fontSize: '0.8rem', color: 'var(--ink-muted)', marginTop: '0.25rem' }}>{cameraError}</p>
+                </div>
+              ) : pipelineError ? (
+                <div style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--signal-alert)' }}>
+                  <ShieldAlert size={32} style={{ margin: '0 auto 0.5rem' }} />
+                  <p style={{ fontWeight: 600, fontFamily: 'var(--font-mono)', fontSize: '0.85rem' }}>MEDIAPIPE ERROR</p>
+                  <p style={{ fontSize: '0.8rem', color: 'var(--ink-muted)', marginTop: '0.25rem' }}>{pipelineError}</p>
+                </div>
+              ) : (
+                <>
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      objectFit: 'cover',
+                      transform: 'scaleX(-1)'
+                    }}
+                  />
+                  <canvas
+                    ref={canvasRef}
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      width: '100%',
+                      height: '100%',
+                      objectFit: 'cover',
+                      transform: 'scaleX(-1)',
+                      pointerEvents: 'none'
+                    }}
+                  />
+                </>
+              )}
+            </div>
+
+            <div style={{
+              marginTop: '0.85rem',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.75rem',
+              color: 'var(--ink-muted)'
+            }}>
+              <span>INFERENCE RATE : <span style={{ color: 'var(--ink-text)' }}>{measuredFps} FPS</span></span>
+              <span>{poseDetected ? '33 LANDMARKS ACTIVE' : 'NO SUBJECT DETECTED'}</span>
+            </div>
+          </div>
+
+          {/* Cross-Tab Signal Controls */}
+          <div className="glass-panel" style={{ padding: '1.25rem' }}>
+            <div className="panel-header">
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', letterSpacing: '0.06em', color: 'var(--ink-text)' }}>
+                TELEMETRY BUS CONTROL
+              </span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--ink-muted)' }}>
+                SIMULATION
+              </span>
+            </div>
+            <p style={{ fontSize: '0.85rem', color: 'var(--ink-muted)', marginBottom: '1rem', lineHeight: 1.5 }}>
+              Transmit test signal events over <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--ink-text)' }}>BroadcastChannel</span> to verify target workspace reactions.
+            </p>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+              <button
+                id="btn-send-test-signal"
+                className="btn btn-danger"
+                onClick={handleSendTestSignal}
+              >
+                Send Test (Slouching 2)
+              </button>
+
+              <button
+                id="btn-clear-intervention"
+                className="btn btn-secondary"
+                onClick={handleSendClear}
+              >
+                Clear Intervention
+              </button>
+            </div>
+
+            <div style={{
+              marginTop: '0.85rem',
+              padding: '0.5rem 0.75rem',
+              borderRadius: '2px',
+              background: 'var(--ink-bg)',
+              fontSize: '0.75rem',
+              fontFamily: 'var(--font-mono)',
+              border: '1px solid var(--ink-border)'
+            }}>
+              <span style={{ color: 'var(--ink-muted)' }}>LAST EMITTED // </span>
+              <span style={{ color: 'var(--ink-text)' }}>{lastSentMessage}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Right Column: Real-Time Posture Analytics, Classifier & Visibility Debug */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          {/* Posture Classification Status Card */}
+          <div className="glass-panel" style={{ padding: '1.25rem' }}>
+            <div className="panel-header" style={{ alignItems: 'baseline' }}>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', letterSpacing: '0.06em', color: 'var(--ink-text)' }}>
+                POSTURE INTELLIGENCE CLASSIFIER
+              </span>
+
+              {/* Bracketed --font-mono label style */}
+              <span style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: '0.75rem',
+                fontWeight: 600,
+                letterSpacing: '0.06em',
+                color:
+                  postureClassification.status === 'good' ? 'var(--signal-good)' :
+                  postureClassification.status === 'insufficient_data' ? 'var(--ink-muted)' :
+                  'var(--signal-alert)'
+              }}>
+                [ {postureClassification.status.toUpperCase().replace('_', ' ')}{postureClassification.severity > 0 ? ` · SEV ${postureClassification.severity}` : ''} ]
+              </span>
+            </div>
+
+            {/* Diagnostic Reason */}
+            <div style={{
+              padding: '0.65rem 0.85rem',
+              borderRadius: '2px',
+              background: 'var(--ink-bg)',
+              fontSize: '0.8rem',
+              fontFamily: 'var(--font-mono)',
+              color: 'var(--ink-muted)',
+              marginBottom: '1rem',
+              border: '1px solid var(--ink-border)'
+            }}>
+              <span style={{ color: 'var(--ink-text)' }}>DIAGNOSIS : </span>
+              {postureClassification.reason}
+            </div>
+
+            {/* Live Metrics Grid with 3px left border-accent stripe on threshold breach */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.75rem' }}>
+              {/* Lateral Tilt */}
+              {(() => {
+                const isBreached = (postureMetrics?.lateralTiltDeg ?? 0) >= 6;
+                return (
+                  <div style={{
+                    padding: '0.65rem 0.75rem',
+                    borderRadius: '2px',
+                    background: 'var(--ink-bg)',
+                    border: '1px solid var(--ink-border)',
+                    borderLeft: isBreached ? '3px solid var(--signal-alert)' : '1px solid var(--ink-border)'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: 'var(--ink-muted)', fontSize: '0.7rem', fontFamily: 'var(--font-mono)', marginBottom: '0.25rem' }}>
+                      <span>LATERAL TILT</span>
+                      {isBreached && <span style={{ color: 'var(--signal-alert)', fontSize: '0.65rem' }}>WARN</span>}
+                    </div>
+                    <div style={{ fontSize: '1.15rem', fontFamily: 'var(--font-mono)', fontWeight: 500, color: isBreached ? 'var(--signal-alert)' : 'var(--ink-text)' }}>
+                      {postureMetrics?.lateralTiltDeg !== null && postureMetrics?.lateralTiltDeg !== undefined
+                        ? `${postureMetrics.lateralTiltDeg}°`
+                        : '—'}
+                      {postureMetrics?.leanDirection !== 'neutral' && postureMetrics?.lateralTiltDeg !== null && postureMetrics?.lateralTiltDeg !== undefined ? (
+                        <span style={{ fontSize: '0.75rem', color: 'var(--ink-muted)', marginLeft: '6px' }}>({postureMetrics?.leanDirection})</span>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Shoulder Tilt */}
+              {(() => {
+                const isBreached = (postureMetrics?.shoulderTiltDeg ?? 0) >= 5;
+                return (
+                  <div style={{
+                    padding: '0.65rem 0.75rem',
+                    borderRadius: '2px',
+                    background: 'var(--ink-bg)',
+                    border: '1px solid var(--ink-border)',
+                    borderLeft: isBreached ? '3px solid var(--signal-alert)' : '1px solid var(--ink-border)'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: 'var(--ink-muted)', fontSize: '0.7rem', fontFamily: 'var(--font-mono)', marginBottom: '0.25rem' }}>
+                      <span>SHOULDER TILT</span>
+                      {isBreached && <span style={{ color: 'var(--signal-alert)', fontSize: '0.65rem' }}>WARN</span>}
+                    </div>
+                    <div style={{ fontSize: '1.15rem', fontFamily: 'var(--font-mono)', fontWeight: 500, color: isBreached ? 'var(--signal-alert)' : 'var(--ink-text)' }}>
+                      {postureMetrics?.shoulderTiltDeg !== null && postureMetrics?.shoulderTiltDeg !== undefined
+                        ? `${postureMetrics.shoulderTiltDeg}°`
+                        : '—'}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Head Forward Offset */}
+              {(() => {
+                const isBreached = (postureMetrics?.headForwardOffset ?? 0) >= 0.16;
+                return (
+                  <div style={{
+                    padding: '0.65rem 0.75rem',
+                    borderRadius: '2px',
+                    background: 'var(--ink-bg)',
+                    border: '1px solid var(--ink-border)',
+                    borderLeft: isBreached ? '3px solid var(--signal-alert)' : '1px solid var(--ink-border)'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: 'var(--ink-muted)', fontSize: '0.7rem', fontFamily: 'var(--font-mono)', marginBottom: '0.25rem' }}>
+                      <span>HEAD OFFSET</span>
+                      {isBreached && <span style={{ color: 'var(--signal-alert)', fontSize: '0.65rem' }}>WARN</span>}
+                    </div>
+                    <div style={{ fontSize: '1.15rem', fontFamily: 'var(--font-mono)', fontWeight: 500, color: isBreached ? 'var(--signal-alert)' : 'var(--ink-text)' }}>
+                      {postureMetrics?.headForwardOffset !== null && postureMetrics?.headForwardOffset !== undefined
+                        ? postureMetrics.headForwardOffset
+                        : '—'}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Head Torso Angle */}
+              {(() => {
+                const isBreached = (postureMetrics?.headTorsoAngleDeg ?? 0) >= 18;
+                return (
+                  <div style={{
+                    padding: '0.65rem 0.75rem',
+                    borderRadius: '2px',
+                    background: 'var(--ink-bg)',
+                    border: '1px solid var(--ink-border)',
+                    borderLeft: isBreached ? '3px solid var(--signal-alert)' : '1px solid var(--ink-border)'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: 'var(--ink-muted)', fontSize: '0.7rem', fontFamily: 'var(--font-mono)', marginBottom: '0.25rem' }}>
+                      <span>HEAD-TORSO ANGLE</span>
+                      {isBreached && <span style={{ color: 'var(--signal-alert)', fontSize: '0.65rem' }}>WARN</span>}
+                    </div>
+                    <div style={{ fontSize: '1.15rem', fontFamily: 'var(--font-mono)', fontWeight: 500, color: isBreached ? 'var(--signal-alert)' : 'var(--ink-text)' }}>
+                      {postureMetrics?.headTorsoAngleDeg !== null && postureMetrics?.headTorsoAngleDeg !== undefined
+                        ? `${postureMetrics.headTorsoAngleDeg}°`
+                        : '—'}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Confidence & Landmark Health Bar */}
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginTop: '0.85rem',
+              padding: '0.5rem 0.75rem',
+              borderRadius: '2px',
+              background: 'var(--ink-bg)',
+              fontSize: '0.75rem',
+              fontFamily: 'var(--font-mono)',
+              border: '1px solid var(--ink-border)'
+            }}>
+              <div>
+                <span style={{ color: 'var(--ink-muted)' }}>CONFIDENCE // </span>
+                <span style={{ color: (postureMetrics?.confidence ?? 0) > 0.4 ? 'var(--signal-good)' : 'var(--ink-muted)' }}>
+                  {postureMetrics ? `${Math.round(postureMetrics.confidence * 100)}%` : '0%'}
+                </span>
+              </div>
+              <div>
+                <span style={{ color: 'var(--ink-muted)' }}>STATE // </span>
+                <span style={{ color: poseDetected ? 'var(--signal-good)' : 'var(--ink-muted)' }}>
+                  {poseDetected ? 'LOCKED' : 'SEARCHING'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Developer Landmark Visibility Debug Table */}
+          <div className="glass-panel" style={{ padding: '1.25rem' }}>
+            <div className="panel-header">
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', letterSpacing: '0.06em', color: 'var(--ink-text)' }}>
+                LANDMARK VISIBILITY MATRIX
+              </span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--ink-muted)' }}>
+                RAW SCORE
+              </span>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.5rem', fontFamily: 'var(--font-mono)', fontSize: '0.75rem' }}>
+              {[
+                { label: 'NOSE', val: postureMetrics?.visibilityDebug.nose },
+                { label: 'L. EAR', val: postureMetrics?.visibilityDebug.leftEar },
+                { label: 'R. EAR', val: postureMetrics?.visibilityDebug.rightEar },
+                { label: 'L. SHOULDER', val: postureMetrics?.visibilityDebug.leftShoulder },
+                { label: 'R. SHOULDER', val: postureMetrics?.visibilityDebug.rightShoulder },
+                { label: 'L. HIP', val: postureMetrics?.visibilityDebug.leftHip },
+                { label: 'R. HIP', val: postureMetrics?.visibilityDebug.rightHip },
+                { label: 'CONFIDENCE', val: postureMetrics?.confidence !== undefined ? Number(postureMetrics.confidence.toFixed(2)) : undefined }
+              ].map((item, idx) => {
+                const numericVal = typeof item.val === 'number' ? item.val : null;
+                const isGood = numericVal !== null && numericVal > 0.3;
+                return (
+                  <div
+                    key={idx}
+                    style={{
+                      background: 'var(--ink-bg)',
+                      padding: '0.4rem 0.55rem',
+                      borderRadius: '2px',
+                      border: '1px solid var(--ink-border)'
+                    }}
+                  >
+                    <div style={{ color: 'var(--ink-muted)', fontSize: '0.65rem', marginBottom: '2px' }}>{item.label}</div>
+                    <div style={{ color: isGood ? 'var(--signal-good)' : 'var(--ink-muted)' }}>
+                      {item.val ?? 'N/A'}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Activity / Event Log */}
+          <div className="glass-panel" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column' }}>
+            <div className="panel-header">
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', letterSpacing: '0.06em', color: 'var(--ink-text)' }}>
+                CHANNEL ACTIVITY LOG
+              </span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--ink-muted)' }}>
+                EVENT BUS
+              </span>
+            </div>
+
+            <div style={{
+              minHeight: '75px',
+              backgroundColor: 'var(--ink-bg)',
+              borderRadius: '2px',
+              padding: '0.65rem',
+              fontSize: '0.72rem',
+              fontFamily: 'var(--font-mono)',
+              overflowY: 'auto',
+              border: '1px solid var(--ink-border)',
+              color: 'var(--ink-muted)'
+            }}>
+              {receivedMessages.length === 0 ? (
+                <div style={{ color: 'var(--ink-muted)', fontStyle: 'italic' }}>No incoming channel events logged.</div>
+              ) : (
+                receivedMessages.map((msg, idx) => (
+                  <div key={idx} style={{ marginBottom: '0.25rem', wordBreak: 'break-all', color: 'var(--ink-text)' }}>
+                    {msg}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+</file>
+
+</files>

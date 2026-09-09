@@ -31,18 +31,103 @@ export type PostureSeverity = 0 | 1 | 2 | 3;
 export interface PostureClassification {
   status: PostureStatus;
   severity: PostureSeverity;
+  deviationScore: number; // 0.0-1.0, continuous
   reason?: string;
 }
 
 /**
- * Classifies posture metrics into ergonomic states (good, slouching, leaning, or insufficient_data).
+ * Computes a continuous deviation score from 0.0 (reference posture) to 1.0 (maximum deviation).
+ * Interpolates each available metric linearly between its MILD and SEVERE thresholds,
+ * clamped to [0, 1], and returns the maximum contribution across all metrics.
+ */
+export function computeDeviationScore(metrics: PostureMetrics): number {
+  if (!metrics.isValid || metrics.confidence < POSTURE_THRESHOLDS.MIN_CONFIDENCE) {
+    return 0;
+  }
+
+  const scores: number[] = [];
+
+  const clamp01 = (val: number) => Math.max(0, Math.min(1, val));
+  const calcLinearRatio = (val: number, mild: number, severe: number) => {
+    if (val <= mild) return 0;
+    if (val >= severe) return 1;
+    return (val - mild) / (severe - mild);
+  };
+
+  // 1. Lateral Tilt contribution
+  if (metrics.lateralTiltDeg !== null) {
+    scores.push(
+      clamp01(
+        calcLinearRatio(
+          metrics.lateralTiltDeg,
+          POSTURE_THRESHOLDS.LATERAL_TILT_MILD,
+          POSTURE_THRESHOLDS.LATERAL_TILT_SEVERE
+        )
+      )
+    );
+  }
+
+  // 2. Shoulder Tilt contribution
+  if (metrics.shoulderTiltDeg !== null) {
+    scores.push(
+      clamp01(
+        calcLinearRatio(
+          metrics.shoulderTiltDeg,
+          POSTURE_THRESHOLDS.SHOULDER_TILT_MILD,
+          POSTURE_THRESHOLDS.SHOULDER_TILT_SEVERE
+        )
+      )
+    );
+  }
+
+  // 3. Head Forward Offset contribution
+  if (metrics.headForwardOffset !== null) {
+    scores.push(
+      clamp01(
+        calcLinearRatio(
+          metrics.headForwardOffset,
+          POSTURE_THRESHOLDS.HEAD_FORWARD_MILD,
+          POSTURE_THRESHOLDS.HEAD_FORWARD_SEVERE
+        )
+      )
+    );
+  }
+
+  // 4. Head-Torso Angle contribution
+  if (metrics.headTorsoAngleDeg !== null) {
+    scores.push(
+      clamp01(
+        calcLinearRatio(
+          metrics.headTorsoAngleDeg,
+          POSTURE_THRESHOLDS.HEAD_TORSO_ANGLE_MILD,
+          POSTURE_THRESHOLDS.HEAD_TORSO_ANGLE_SEVERE
+        )
+      )
+    );
+  }
+
+  if (scores.length === 0) {
+    return 0;
+  }
+
+  // Maximum contribution across available metrics ("worst metric wins")
+  const maxScore = Math.max(...scores);
+  return Number(maxScore.toFixed(3));
+}
+
+/**
+ * Classifies posture metrics into ergonomic states (good, slouching, leaning, or insufficient_data)
+ * and computes continuous deviationScore alongside discrete severity.
  */
 export function classifyPosture(metrics: PostureMetrics): PostureClassification {
+  const deviationScore = computeDeviationScore(metrics);
+
   // 1. Check data sufficiency & presence
   if (!metrics.isValid || metrics.confidence < POSTURE_THRESHOLDS.MIN_CONFIDENCE) {
     return {
       status: 'insufficient_data',
       severity: 0,
+      deviationScore: 0,
       reason: 'Body landmarks not sufficiently visible or out of frame'
     };
   }
@@ -57,6 +142,7 @@ export function classifyPosture(metrics: PostureMetrics): PostureClassification 
     return {
       status: 'insufficient_data',
       severity: 0,
+      deviationScore: 0,
       reason: 'Key upper body landmarks missing'
     };
   }
@@ -110,6 +196,7 @@ export function classifyPosture(metrics: PostureMetrics): PostureClassification 
     return {
       status: 'good',
       severity: 0,
+      deviationScore,
       reason: 'Upright and well aligned'
     };
   }
@@ -124,6 +211,7 @@ export function classifyPosture(metrics: PostureMetrics): PostureClassification 
     return {
       status: 'leaning',
       severity: leanSeverity,
+      deviationScore,
       reason: details || 'Lateral torso lean detected'
     };
   } else {
@@ -135,6 +223,7 @@ export function classifyPosture(metrics: PostureMetrics): PostureClassification 
     return {
       status: 'slouching',
       severity: slouchSeverity,
+      deviationScore,
       reason: details || 'Forward head slouch detected'
     };
   }

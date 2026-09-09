@@ -5,6 +5,7 @@ export interface PostureStatusMessage {
   type: 'POSTURE_STATUS';
   status: PostureStatusType;
   severity: SeverityLevel;
+  intensity: number; // 0.0-1.0, continuous deviation score
 }
 
 export interface BlinkAlertMessage {

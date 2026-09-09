@@ -1,10 +1,16 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { send, onMessage } from '../lib/channel';
 import type { SyncMessage } from '../types/messages';
 import { useVisionFeed } from '../lib/hooks/useVisionFeed';
+import { POSTURE_THRESHOLDS } from '../lib/posture/postureClassifier';
+import { PostureDebouncer } from '../lib/posture/temporalDebounce';
+import type { DebouncerState } from '../lib/posture/temporalDebounce';
+import { PostureInstructions } from '../components/PostureInstructions';
 import { ShieldAlert } from 'lucide-react';
 
 export const Dashboard: React.FC = () => {
+  const navigate = useNavigate();
   const {
     videoRef,
     canvasRef,
@@ -19,10 +25,106 @@ export const Dashboard: React.FC = () => {
     postureClassification
   } = useVisionFeed({ active: true });
 
-  // Broadcast Log State
+  // Posture Instructions Orientation state
+  const [hasSeenInstructions, setHasSeenInstructions] = useState<boolean>(() => {
+    return localStorage.getItem('postureInstructionsSeen') === 'true';
+  });
+
+  // Calculate reliable visibility: metrics.isValid === true with confidence above POSTURE_THRESHOLDS.MIN_CONFIDENCE
+  const hasVisiblePerson = Boolean(
+    postureMetrics?.isValid &&
+    (postureMetrics?.confidence ?? 0) >= POSTURE_THRESHOLDS.MIN_CONFIDENCE
+  );
+
+  const handleCompleteInstructions = () => {
+    localStorage.setItem('postureInstructionsSeen', 'true');
+    setHasSeenInstructions(true);
+    navigate('/demo');
+  };
+
+  const handleDismissInstructions = () => {
+    localStorage.setItem('postureInstructionsSeen', 'true');
+    setHasSeenInstructions(true);
+  };
+
+  const handleReopenInstructions = () => {
+    setHasSeenInstructions(false);
+  };
+
+  // ---------- Broadcast Log State ----------
   const [lastSentMessage, setLastSentMessage] = useState<string>('None yet');
   const [receivedMessages, setReceivedMessages] = useState<string[]>([]);
 
+  // ---------- Auto-broadcast via PostureDebouncer ----------
+  const [smoothedScore, setSmoothedScore] = useState<number>(0);
+  const [debouncerState, setDebouncerState] = useState<DebouncerState>('idle');
+
+  // Stable ref so the debouncer instance survives re-renders
+  const debouncerRef = useRef<PostureDebouncer | null>(null);
+
+  if (!debouncerRef.current) {
+    debouncerRef.current = new PostureDebouncer({
+      onTriggered: (score) => {
+        // Build the broadcast from the LATEST classification, captured via closure ref below
+        // (the actual send happens inside the effect that calls debouncer.update)
+        void score; // score is used inside the effect closure
+      },
+      onCleared: () => {},
+      onScoreUpdate: (score) => setSmoothedScore(score),
+    });
+  }
+
+  // Reset debouncer whenever camera goes offline
+  useEffect(() => {
+    if (!cameraActive) {
+      debouncerRef.current?.reset();
+    }
+  }, [cameraActive]);
+
+  // Feed postureClassification into the debouncer every time it updates
+  useEffect(() => {
+    const debouncer = debouncerRef.current;
+    if (!debouncer) return;
+
+    const rawScore = postureClassification.deviationScore ?? 0;
+
+    // Capture the state before update so we can detect transitions
+    const prevState = debouncer.currentState;
+    debouncer.update(rawScore);
+    const nextState = debouncer.currentState;
+
+    // Reflect state change in UI
+    if (prevState !== nextState) {
+      setDebouncerState(nextState);
+    }
+
+    // Fire side effects on state transitions
+    if (prevState !== 'triggered' && nextState === 'triggered') {
+      // posture newly triggered — broadcast real status
+      const status = postureClassification.status;
+      if (status === 'good' || status === 'insufficient_data') return;
+      const msg: SyncMessage = {
+        type: 'POSTURE_STATUS',
+        status,
+        severity: postureClassification.severity,
+        intensity: debouncer.currentSmoothedScore,
+      };
+      send(msg);
+      setLastSentMessage(
+        `AUTO POSTURE_STATUS (${status}, sev ${postureClassification.severity}, score ${debouncer.currentSmoothedScore.toFixed(2)}) at ${new Date().toLocaleTimeString()}`
+      );
+    } else if (prevState === 'triggered' && nextState === 'recovering') {
+      // score has dipped — nothing yet, wait for onCleared
+    } else if (prevState === 'recovering' && nextState === 'idle') {
+      // cleared
+      const msg: SyncMessage = { type: 'CLEAR_INTERVENTION' };
+      send(msg);
+      setLastSentMessage(`AUTO CLEAR_INTERVENTION at ${new Date().toLocaleTimeString()}`);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [postureClassification]);
+
+  // ---------- Channel Activity ----------
   // Listen for cross-tab messages (e.g., DEMO_READY)
   useEffect(() => {
     const unsubscribe = onMessage((msg: SyncMessage) => {
@@ -42,10 +144,11 @@ export const Dashboard: React.FC = () => {
     const msg: SyncMessage = {
       type: 'POSTURE_STATUS',
       status: 'slouching',
-      severity: 2
+      severity: 2,
+      intensity: 0.6
     };
     send(msg);
-    setLastSentMessage(`POSTURE_STATUS (slouching, severity: 2) at ${new Date().toLocaleTimeString()}`);
+    setLastSentMessage(`MANUAL POSTURE_STATUS (slouching, severity: 2, intensity: 0.6) at ${new Date().toLocaleTimeString()}`);
   };
 
   const handleSendClear = () => {
@@ -53,7 +156,7 @@ export const Dashboard: React.FC = () => {
       type: 'CLEAR_INTERVENTION'
     };
     send(msg);
-    setLastSentMessage(`CLEAR_INTERVENTION at ${new Date().toLocaleTimeString()}`);
+    setLastSentMessage(`MANUAL CLEAR_INTERVENTION at ${new Date().toLocaleTimeString()}`);
   };
 
   return (
@@ -94,7 +197,48 @@ export const Dashboard: React.FC = () => {
             BROADCAST CHANNEL : <span style={{ color: 'var(--ink-text)' }}>posturesync</span> (same-origin)
           </p>
         </div>
+
+        {/* Persistent review posture guide button */}
+        {hasSeenInstructions && (
+          <button
+            id="btn-review-posture-guide"
+            onClick={handleReopenInstructions}
+            style={{
+              background: 'transparent',
+              border: '1px solid var(--ink-border)',
+              borderRadius: '3px',
+              padding: '0.35rem 0.75rem',
+              color: 'var(--ink-muted)',
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.75rem',
+              letterSpacing: '0.04em',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease'
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = 'var(--ink-text)';
+              e.currentTarget.style.borderColor = 'var(--ink-text)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = 'var(--ink-muted)';
+              e.currentTarget.style.borderColor = 'var(--ink-border)';
+            }}
+          >
+            [ REVIEW POSTURE GUIDE ]
+          </button>
+        )}
       </div>
+
+      {/* Posture Instructions Screen / Step (Orientation) */}
+      {!hasSeenInstructions && (
+        <div style={{ marginBottom: '2rem' }}>
+          <PostureInstructions
+            hasVisiblePerson={hasVisiblePerson}
+            onContinue={handleCompleteInstructions}
+            onDismiss={handleDismissInstructions}
+          />
+        </div>
+      )}
 
       {/* Main 2-Column Grid */}
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.35fr) minmax(0, 1fr)', gap: '1.5rem' }}>
@@ -389,6 +533,41 @@ export const Dashboard: React.FC = () => {
                 <span style={{ color: 'var(--ink-muted)' }}>STATE // </span>
                 <span style={{ color: poseDetected ? 'var(--signal-good)' : 'var(--ink-muted)' }}>
                   {poseDetected ? 'LOCKED' : 'SEARCHING'}
+                </span>
+              </div>
+            </div>
+
+            {/* Debouncer / Auto-broadcast Status */}
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginTop: '0.5rem',
+              padding: '0.5rem 0.75rem',
+              borderRadius: '2px',
+              background: 'var(--ink-bg)',
+              fontSize: '0.75rem',
+              fontFamily: 'var(--font-mono)',
+              border: '1px solid var(--ink-border)'
+            }}>
+              <div>
+                <span style={{ color: 'var(--ink-muted)' }}>SMOOTHED SCORE // </span>
+                <span style={{
+                  color: smoothedScore >= 0.30 ? 'var(--signal-alert)' : smoothedScore >= 0.15 ? 'var(--ink-text)' : 'var(--signal-good)'
+                }}>
+                  {smoothedScore.toFixed(3)}
+                </span>
+              </div>
+              <div>
+                <span style={{ color: 'var(--ink-muted)' }}>DEBOUNCE // </span>
+                <span style={{
+                  color:
+                    debouncerState === 'triggered' ? 'var(--signal-alert)' :
+                    debouncerState === 'accumulating' ? 'var(--ink-text)' :
+                    debouncerState === 'recovering' ? 'var(--ink-muted)' :
+                    'var(--signal-good)'
+                }}>
+                  {debouncerState.toUpperCase()}
                 </span>
               </div>
             </div>

@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   initializeMediaPipe,
   detectLandmarksForVideo,
@@ -50,6 +50,7 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
   const [postureClassification, setPostureClassification] = useState<PostureClassification>({
     status: 'insufficient_data',
     severity: 0,
+    deviationScore: 0,
     reason: 'Initializing vision pipeline...'
   });
 
@@ -182,6 +183,7 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
               setPostureClassification({
                 status: 'insufficient_data',
                 severity: 0,
+                deviationScore: 0,
                 reason: 'No person detected in camera frame'
               });
             }
