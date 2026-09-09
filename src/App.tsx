@@ -12,25 +12,22 @@ export const App: React.FC = () => {
         {/* Navigation Bar */}
         <header className="top-nav">
           <NavLink to="/" className="brand-badge">
-            <Activity size={24} color="#60a5fa" />
+            <span className="nav-status-dot" aria-label="Monitoring capability available" />
             <span>syncPosture</span>
           </NavLink>
 
           <nav className="nav-links">
             <NavLink to="/" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} end>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
-                <HomeIcon size={16} /> Home
-              </span>
+              <HomeIcon size={15} />
+              <span>Home</span>
             </NavLink>
             <NavLink to="/dashboard" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
-                <Activity size={16} /> Dashboard
-              </span>
+              <Activity size={15} />
+              <span>Dashboard</span>
             </NavLink>
             <NavLink to="/demo" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
-                <LayoutDashboard size={16} /> Demo Website
-              </span>
+              <LayoutDashboard size={15} />
+              <span>Demo</span>
             </NavLink>
           </nav>
         </header>

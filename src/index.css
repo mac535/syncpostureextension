@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+
 :root {
   /* Quiet Place Palette */
   --qp-sage: #DCEBE4;
@@ -26,17 +28,29 @@
   --space-96: 96px;
   --space-120: 120px;
 
-  /* Typography */
+  /* Quiet Place Typography */
   --font-serif: Georgia, 'Times New Roman', Cambria, serif;
   --font-sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 
-  /* Dashboard / App Shell Variables */
-  --bg-primary: #0b0f19;
-  --bg-secondary: #111827;
-  --bg-card: rgba(17, 24, 39, 0.75);
-  --bg-card-border: rgba(255, 255, 255, 0.08);
-  --text-main: #f3f4f6;
-  --text-muted: #9ca3af;
+  /* syncPosture Design System Tokens */
+  --ink-bg: #0F2138;
+  --ink-panel: #16304A;
+  --ink-border: #2C4A66;
+  --ink-text: #E7EEF3;
+  --ink-muted: #8CA6BC;
+  --signal-alert: #FF6B4A;
+  --signal-good: #4FD8C4;
+
+  --font-display: 'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  /* Legacy variable mappings for backward compatibility */
+  --bg-primary: var(--ink-bg);
+  --bg-secondary: var(--ink-panel);
+  --bg-card: var(--ink-panel);
+  --bg-card-border: var(--ink-border);
+  --text-main: var(--ink-text);
+  --text-muted: var(--ink-muted);
 }
 
 * {
@@ -46,9 +60,9 @@
 }
 
 body {
-  font-family: var(--font-sans);
-  background-color: var(--bg-primary);
-  color: var(--text-main);
+  font-family: var(--font-display);
+  background-color: var(--ink-bg);
+  color: var(--ink-text);
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
 }
@@ -1034,104 +1048,202 @@ a {
 }
 
 /* ==========================================================
-   APP SHELL / DASHBOARD STYLING
+   APP SHELL / DASHBOARD STYLING (Technical Instrument Panel)
    ========================================================== */
 
+/* Flat technical panel: 1px hairline border, max 4px radius, no blur/glow */
 .glass-panel {
-  background: var(--bg-card);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--bg-card-border);
-  border-radius: 1rem;
-  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+  background: var(--ink-panel);
+  border: 1px solid var(--ink-border);
+  border-radius: 4px;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
+/* Technical top navigation */
 .top-nav {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 1rem 2rem;
-  border-bottom: 1px solid var(--bg-card-border);
-  background: rgba(11, 15, 25, 0.85);
-  backdrop-filter: blur(10px);
+  padding: 0.75rem 1.5rem;
+  border-bottom: 1px solid var(--ink-border);
+  background: var(--ink-bg);
   position: sticky;
   top: 0;
   z-index: 40;
+  font-family: var(--font-display);
 }
 
+/* Technical brand badge - plain font-mono wordmark in --ink-text */
 .brand-badge {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  font-weight: 700;
-  font-size: 1.25rem;
-  background: linear-gradient(135deg, #60a5fa, #a78bfa);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  gap: 0.5rem;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: 1rem;
+  letter-spacing: -0.02em;
+  color: var(--ink-text);
+  background: none;
+  -webkit-background-clip: unset;
+  -webkit-text-fill-color: var(--ink-text);
+  text-decoration: none;
+}
+
+/* Status indicator: 6px dot in --signal-good with subtle pulse */
+.nav-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--signal-good);
+  display: inline-block;
+  animation: pulse-status 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse-status {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.85);
+  }
 }
 
 .nav-links {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 1.5rem;
 }
 
+/* Nav links: 1px bottom-border underline on hover/active, --font-display, no background fill */
 .nav-link {
-  padding: 0.5rem 1rem;
-  border-radius: 0.5rem;
-  font-size: 0.875rem;
+  padding: 0.4rem 0;
+  border-radius: 0;
+  border: none;
+  border-bottom: 1px solid transparent;
+  font-family: var(--font-display);
+  font-size: 0.85rem;
   font-weight: 500;
-  color: var(--text-muted);
-  transition: all 0.2s ease;
+  color: var(--ink-muted);
+  background: transparent !important;
+  transition: color 0.15s ease, border-color 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
 }
 
-.nav-link:hover, .nav-link.active {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.08);
+.nav-link:hover {
+  color: var(--ink-text);
+  border-bottom-color: var(--ink-text);
 }
 
+.nav-link.active {
+  color: var(--ink-text);
+  border-bottom-color: var(--ink-text);
+}
+
+.nav-link svg {
+  color: var(--ink-muted);
+  transition: color 0.15s ease;
+}
+
+.nav-link:hover svg,
+.nav-link.active svg {
+  color: var(--ink-text);
+}
+
+/* Technical buttons: flat, 1px border, max 4px radius, no gradients, no glows */
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
-  padding: 0.65rem 1.25rem;
-  font-size: 0.875rem;
+  padding: 0.5rem 1rem;
+  font-family: var(--font-display);
+  font-size: 0.85rem;
   font-weight: 600;
-  border-radius: 0.6rem;
-  border: none;
+  border-radius: 4px;
+  border: 1px solid transparent;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: opacity 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+  box-shadow: none;
+  text-decoration: none;
 }
 
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Primary = solid --ink-text background with --ink-bg text (inverted, high contrast) */
 .btn-primary {
-  background: linear-gradient(135deg, #3b82f6, #6366f1);
-  color: #fff;
-  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
+  background: var(--ink-text);
+  color: var(--ink-bg);
+  border-color: var(--ink-text);
+  box-shadow: none;
 }
 
-.btn-primary:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.6);
+.btn-primary:hover:not(:disabled) {
+  transform: none;
+  box-shadow: none;
+  opacity: 0.92;
 }
 
-.btn-danger {
-  background: linear-gradient(135deg, #f43f5e, #e11d48);
-  color: #fff;
-  box-shadow: 0 4px 14px rgba(244, 63, 94, 0.4);
-}
-
-.btn-danger:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 6px 20px rgba(244, 63, 94, 0.6);
-}
-
+/* Secondary = transparent with --ink-border outline */
 .btn-secondary {
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--text-main);
-  border: 1px solid var(--bg-card-border);
+  background: transparent;
+  color: var(--ink-text);
+  border-color: var(--ink-border);
+  box-shadow: none;
 }
 
-.btn-secondary:hover {
-  background: rgba(255, 255, 255, 0.14);
+.btn-secondary:hover:not(:disabled) {
+  background: var(--ink-panel);
+  border-color: var(--ink-border);
+  color: var(--ink-text);
 }
+
+/* Destructive/alert actions use --signal-alert as a solid fill */
+.btn-danger {
+  background: var(--signal-alert);
+  color: #FFFFFF;
+  border-color: var(--signal-alert);
+  box-shadow: none;
+}
+
+.btn-danger:hover:not(:disabled) {
+  transform: none;
+  box-shadow: none;
+  opacity: 0.92;
+}
+
+/* General Technical Instrument Panel Utilities */
+.text-mono {
+  font-family: var(--font-mono);
+}
+
+.text-display {
+  font-family: var(--font-display);
+}
+
+.signal-alert {
+  color: var(--signal-alert);
+}
+
+.signal-good {
+  color: var(--signal-good);
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 0.75rem;
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid var(--ink-border);
+  font-family: var(--font-display);
+}
+
