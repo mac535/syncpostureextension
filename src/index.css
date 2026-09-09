@@ -1014,16 +1014,14 @@ a {
    ========================================================== */
 
 .demo-content-wrapper {
-  transition: filter 0.6s cubic-bezier(0.16, 1, 0.3, 1), transform 0.6s ease;
+  /* filter is set via inline style from JS; this transition animates all changes smoothly */
+  transition: filter 0.9s cubic-bezier(0.16, 1, 0.3, 1);
   position: relative;
   flex: 1;
+  will-change: filter;
 }
 
-.demo-content-wrapper.blurred {
-  filter: blur(14px) brightness(0.7) saturate(0.8);
-  pointer-events: none;
-  user-select: none;
-}
+/* pointer-events/user-select are toggled inline when intensity > 0 */
 
 .intervention-overlay {
   position: fixed;
@@ -1034,16 +1032,18 @@ a {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: radial-gradient(circle, transparent 40%, rgba(233, 111, 103, 0.35) 100%);
+  /* base vignette gradient; opacity driven by inline style */
+  background: radial-gradient(circle, transparent 35%, rgba(233, 111, 103, 0.6) 100%);
   animation: pulse-vignette 2.4s infinite alternate ease-in-out;
+  transition: opacity 0.9s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @keyframes pulse-vignette {
   0% {
-    background: radial-gradient(circle, transparent 45%, rgba(233, 111, 103, 0.2) 100%);
+    background: radial-gradient(circle, transparent 45%, rgba(233, 111, 103, 0.5) 100%);
   }
   100% {
-    background: radial-gradient(circle, transparent 35%, rgba(233, 111, 103, 0.45) 100%);
+    background: radial-gradient(circle, transparent 32%, rgba(233, 111, 103, 0.75) 100%);
   }
 }
 
