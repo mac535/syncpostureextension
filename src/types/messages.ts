@@ -25,9 +25,26 @@ export interface DemoReadyMessage {
   type: 'DEMO_READY';
 }
 
+export interface SetupCompleteMessage {
+  type: 'SETUP_COMPLETE';
+}
+
+export interface PostureTelemetryMessage {
+  type: 'POSTURE_TELEMETRY';
+  status: 'good' | 'slouching' | 'leaning' | 'insufficient_data';
+  severity: 0 | 1 | 2 | 3;
+  intensity: number;
+  debouncerState: 'idle' | 'accumulating' | 'triggered' | 'recovering';
+  timestamp: number;
+}
+
 export type SyncMessage =
   | PostureStatusMessage
   | BlinkAlertMessage
   | BreakReminderMessage
   | ClearInterventionMessage
-  | DemoReadyMessage;
+  | DemoReadyMessage
+  | SetupCompleteMessage
+  | PostureTelemetryMessage;
+
+

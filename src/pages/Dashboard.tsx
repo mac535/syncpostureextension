@@ -1,16 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { send, onMessage } from '../lib/channel';
 import type { SyncMessage } from '../types/messages';
 import { useVisionFeed } from '../lib/hooks/useVisionFeed';
-import { POSTURE_THRESHOLDS } from '../lib/posture/postureClassifier';
 import { PostureDebouncer } from '../lib/posture/temporalDebounce';
 import type { DebouncerState } from '../lib/posture/temporalDebounce';
 import { PostureInstructions } from '../components/PostureInstructions';
 import { ShieldAlert } from 'lucide-react';
 
 export const Dashboard: React.FC = () => {
-  const navigate = useNavigate();
   const {
     videoRef,
     canvasRef,
@@ -22,7 +19,9 @@ export const Dashboard: React.FC = () => {
     poseDetected,
     measuredFps,
     postureMetrics,
-    postureClassification
+    postureClassification,
+    personCount,
+    detectionMode
   } = useVisionFeed({ active: true });
 
   // Posture Instructions Orientation state
@@ -30,16 +29,35 @@ export const Dashboard: React.FC = () => {
     return localStorage.getItem('postureInstructionsSeen') === 'true';
   });
 
-  // Calculate reliable visibility: metrics.isValid === true with confidence above POSTURE_THRESHOLDS.MIN_CONFIDENCE
-  const hasVisiblePerson = Boolean(
-    postureMetrics?.isValid &&
-    (postureMetrics?.confidence ?? 0) >= POSTURE_THRESHOLDS.MIN_CONFIDENCE
-  );
+  // Secondary tab launch error state
+  const [popupBlocked, setPopupBlocked] = useState<boolean>(false);
+
+  // Target window reference name for secondary tab reuse
+  const DEMO_WINDOW_NAME = 'syncPostureDemo';
+
+  const launchDemoTab = () => {
+    try {
+      const demoUrl = `${window.location.origin}/demo`;
+      const secondaryTab = window.open(demoUrl, DEMO_WINDOW_NAME);
+      if (!secondaryTab || secondaryTab.closed || typeof secondaryTab.closed === 'undefined') {
+        setPopupBlocked(true);
+      } else {
+        setPopupBlocked(false);
+        secondaryTab.focus();
+      }
+    } catch (err) {
+      console.error('Failed to open secondary tab:', err);
+      setPopupBlocked(true);
+    }
+  };
 
   const handleCompleteInstructions = () => {
     localStorage.setItem('postureInstructionsSeen', 'true');
     setHasSeenInstructions(true);
-    navigate('/demo');
+    // Emit SETUP_COMPLETE over BroadcastChannel so secondary tabs know setup is valid
+    send({ type: 'SETUP_COMPLETE' });
+    // Keep Dashboard alive! Open secondary tab without unmounting Dashboard
+    launchDemoTab();
   };
 
   const handleDismissInstructions = () => {
@@ -47,13 +65,20 @@ export const Dashboard: React.FC = () => {
     setHasSeenInstructions(true);
   };
 
-  const handleReopenInstructions = () => {
+  const handleRestartSetup = () => {
+    localStorage.removeItem('postureInstructionsSeen');
     setHasSeenInstructions(false);
   };
+
+  // ---------- Demo Tab Connection State ----------
+  const [demoConnected, setDemoConnected] = useState<boolean>(false);
+  const demoHeartbeatTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ---------- Broadcast Log State ----------
   const [lastSentMessage, setLastSentMessage] = useState<string>('None yet');
   const [receivedMessages, setReceivedMessages] = useState<string[]>([]);
+  const lastLogSampleTimeRef = useRef<number>(0);
+  const lastTelemetryBroadcastTimeRef = useRef<number>(0);
 
   // ---------- Auto-broadcast via PostureDebouncer ----------
   const [smoothedScore, setSmoothedScore] = useState<number>(0);
@@ -61,13 +86,12 @@ export const Dashboard: React.FC = () => {
 
   // Stable ref so the debouncer instance survives re-renders
   const debouncerRef = useRef<PostureDebouncer | null>(null);
+  const prevDetectionModeRef = useRef<string>(detectionMode);
 
   if (!debouncerRef.current) {
     debouncerRef.current = new PostureDebouncer({
       onTriggered: (score) => {
-        // Build the broadcast from the LATEST classification, captured via closure ref below
-        // (the actual send happens inside the effect that calls debouncer.update)
-        void score; // score is used inside the effect closure
+        void score;
       },
       onCleared: () => {},
       onScoreUpdate: (score) => setSmoothedScore(score),
@@ -81,64 +105,172 @@ export const Dashboard: React.FC = () => {
     }
   }, [cameraActive]);
 
-  // Feed postureClassification into the debouncer every time it updates
+  // Handle clean mode switching:
+  // When transitioning to multi_person or no_person: reset debouncer and immediately clear any intervention on Demo
+  // When transitioning back to single_person: ensure clean re-entry without stale debouncer scores
+  useEffect(() => {
+    const prevMode = prevDetectionModeRef.current;
+    prevDetectionModeRef.current = detectionMode;
+
+    if (detectionMode !== 'single_person') {
+      debouncerRef.current?.reset();
+      setSmoothedScore(0);
+      setDebouncerState('idle');
+      // If we previously had an intervention triggered or were in single_person mode, broadcast CLEAR_INTERVENTION
+      send({ type: 'CLEAR_INTERVENTION' });
+    } else if (prevMode !== 'single_person') {
+      // Clean re-entry into single_person mode
+      debouncerRef.current?.reset();
+      setSmoothedScore(0);
+      setDebouncerState('idle');
+    }
+  }, [detectionMode]);
+
+  // Feed postureClassification into the debouncer and broadcast throttled continuous telemetry
   useEffect(() => {
     const debouncer = debouncerRef.current;
     if (!debouncer) return;
 
-    const rawScore = postureClassification.deviationScore ?? 0;
+    // 1. Determine raw score: if multi-person, no-person, insufficient_data, score is 0
+    const isSingle = detectionMode === 'single_person';
+    const isInsufficient =
+      !isSingle ||
+      !postureMetrics?.isValid ||
+      postureClassification.status === 'insufficient_data';
+    const rawScore = isInsufficient ? 0 : (postureClassification.deviationScore ?? 0);
 
-    // Capture the state before update so we can detect transitions
+    // 2. Capture debouncer state transitions
     const prevState = debouncer.currentState;
     debouncer.update(rawScore);
     const nextState = debouncer.currentState;
 
-    // Reflect state change in UI
     if (prevState !== nextState) {
       setDebouncerState(nextState);
     }
 
-    // Fire side effects on state transitions
+    // 3. Compute telemetry properties
+    // When posture is good or insufficient data, intensity is 0
+    const rawSmoothed = debouncer.currentSmoothedScore;
+    let clampedIntensity = Math.max(0, Math.min(1, rawSmoothed));
+
+    const status = isInsufficient ? 'insufficient_data' : postureClassification.status;
+    if (status === 'good' || status === 'insufficient_data') {
+      clampedIntensity = 0;
+    }
+
+    const severity = isInsufficient || status === 'good' ? 0 : postureClassification.severity;
+    const now = Date.now();
+
+    // 4. Immediate sends on critical state transitions
+    const isStateTransition = prevState !== nextState;
+
     if (prevState !== 'triggered' && nextState === 'triggered') {
-      // posture newly triggered — broadcast real status
-      const status = postureClassification.status;
-      if (status === 'good' || status === 'insufficient_data') return;
-      const msg: SyncMessage = {
+      // Sustained bad posture triggered
+      const triggerStatus = status === 'good' || status === 'insufficient_data' ? 'slouching' : status;
+      send({
         type: 'POSTURE_STATUS',
-        status,
-        severity: postureClassification.severity,
-        intensity: debouncer.currentSmoothedScore,
-      };
-      send(msg);
-      setLastSentMessage(
-        `AUTO POSTURE_STATUS (${status}, sev ${postureClassification.severity}, score ${debouncer.currentSmoothedScore.toFixed(2)}) at ${new Date().toLocaleTimeString()}`
-      );
-    } else if (prevState === 'triggered' && nextState === 'recovering') {
-      // score has dipped — nothing yet, wait for onCleared
+        status: triggerStatus,
+        severity: severity > 0 ? severity : 1,
+        intensity: clampedIntensity > 0 ? clampedIntensity : 0.35,
+      });
     } else if (prevState === 'recovering' && nextState === 'idle') {
-      // cleared
-      const msg: SyncMessage = { type: 'CLEAR_INTERVENTION' };
-      send(msg);
-      setLastSentMessage(`AUTO CLEAR_INTERVENTION at ${new Date().toLocaleTimeString()}`);
+      // Clear intervention
+      send({ type: 'CLEAR_INTERVENTION' });
+    }
+
+    // 5. Throttled continuous telemetry broadcast (approx ~10Hz / 100ms interval or immediate on state change)
+    const timeSinceLastBroadcast = now - lastTelemetryBroadcastTimeRef.current;
+    if (isStateTransition || timeSinceLastBroadcast >= 95) {
+      lastTelemetryBroadcastTimeRef.current = now;
+
+      send({
+        type: 'POSTURE_TELEMETRY',
+        status,
+        severity,
+        intensity: Number(clampedIntensity.toFixed(3)),
+        debouncerState: nextState,
+        timestamp: now
+      });
+
+      // 6. Log sampling: log immediately on state change, or sample approx once per second
+      const timeSinceLastLog = now - lastLogSampleTimeRef.current;
+      if (isStateTransition || timeSinceLastLog >= 1000) {
+        lastLogSampleTimeRef.current = now;
+        const logEntry = `POSTURE_TELEMETRY status=${status} severity=${severity} intensity=${clampedIntensity.toFixed(2)} state=${nextState}`;
+        setLastSentMessage(`${logEntry} at ${new Date(now).toLocaleTimeString()}`);
+        setReceivedMessages((prev) => [
+          `[${new Date(now).toLocaleTimeString()}] Broadcast: ${logEntry}`,
+          ...prev.slice(0, 9)
+        ]);
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [postureClassification]);
+  }, [postureClassification, postureMetrics, detectionMode]);
 
-  // ---------- Channel Activity ----------
-  // Listen for cross-tab messages (e.g., DEMO_READY)
+  // ---------- Channel Activity & Demo Heartbeat Listener ----------
   useEffect(() => {
     const unsubscribe = onMessage((msg: SyncMessage) => {
       const timestamp = new Date().toLocaleTimeString();
-      setReceivedMessages((prev) => [
-        `[${timestamp}] Received: ${msg.type} ${JSON.stringify(msg)}`,
-        ...prev.slice(0, 9)
-      ]);
+
+      if (msg.type === 'DEMO_READY') {
+        setDemoConnected(true);
+        // Reset timeout for demo presence
+        if (demoHeartbeatTimeoutRef.current) {
+          clearTimeout(demoHeartbeatTimeoutRef.current);
+        }
+        demoHeartbeatTimeoutRef.current = setTimeout(() => {
+          setDemoConnected(false);
+        }, 15000);
+
+        setReceivedMessages((prev) => [
+          `[${timestamp}] Received: DEMO_READY (Demo Tab Connected)`,
+          ...prev.slice(0, 9)
+        ]);
+
+        // Synchronize initial state to newly connected Demo
+        const debouncer = debouncerRef.current;
+        const currentDebouncerState = debouncer?.currentState ?? 'idle';
+        const isInsufficient =
+          !postureMetrics?.isValid ||
+          postureClassification.status === 'insufficient_data';
+        const currentStatus = isInsufficient ? 'insufficient_data' : postureClassification.status;
+        const currentIntensity =
+          currentStatus === 'good' || currentStatus === 'insufficient_data'
+            ? 0
+            : Math.max(0, Math.min(1, debouncer?.currentSmoothedScore ?? 0));
+
+        send({
+          type: 'POSTURE_TELEMETRY',
+          status: currentStatus,
+          severity: currentStatus === 'good' || isInsufficient ? 0 : postureClassification.severity,
+          intensity: Number(currentIntensity.toFixed(3)),
+          debouncerState: currentDebouncerState,
+          timestamp: Date.now()
+        });
+
+        if (currentDebouncerState === 'triggered' && currentStatus !== 'good' && currentStatus !== 'insufficient_data') {
+          send({
+            type: 'POSTURE_STATUS',
+            status: currentStatus,
+            severity: postureClassification.severity,
+            intensity: currentIntensity
+          });
+        }
+      } else {
+        setReceivedMessages((prev) => [
+          `[${timestamp}] Received: ${msg.type} ${JSON.stringify(msg)}`,
+          ...prev.slice(0, 9)
+        ]);
+      }
     });
 
     return () => {
       unsubscribe();
+      if (demoHeartbeatTimeoutRef.current) {
+        clearTimeout(demoHeartbeatTimeoutRef.current);
+      }
     };
-  }, []);
+  }, [postureClassification, postureMetrics]);
 
   const handleSendTestSignal = () => {
     const msg: SyncMessage = {
@@ -160,88 +292,223 @@ export const Dashboard: React.FC = () => {
   };
 
   return (
-    <div style={{ maxWidth: '1240px', margin: '2rem auto 4rem', padding: '0 1.5rem', fontFamily: 'var(--font-display)' }}>
+    <div className="dashboard-wrapper">
       {/* Header bar */}
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem', borderBottom: '1px solid var(--ink-border)', paddingBottom: '1rem' }}>
+      <div className="dashboard-header-bar">
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', flexWrap: 'wrap' }}>
-            <h1 style={{ fontSize: '1.4rem', fontWeight: 600, color: 'var(--ink-text)', margin: 0 }}>
-              POSTURE MONITOR READOUT
-            </h1>
+          <h1 style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--ink-text)', margin: '0 0 0.65rem' }}>
+            POSTURE MONITOR READOUT
+          </h1>
 
-            {/* Status indicators: plain --font-mono labels preceded by small square indicator */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', fontFamily: 'var(--font-mono)', fontSize: '0.75rem', letterSpacing: '0.04em' }}>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem', color: cameraActive ? 'var(--ink-text)' : 'var(--ink-muted)' }}>
-                <span style={{
+          {/* 4-state monitoring status strip */}
+          <div className="status-row" role="status" aria-label="System status">
+            {/* 1. Camera */}
+            <span className="status-item">
+              <span
+                className={`status-dot ${cameraActive ? 'status-dot--good status-dot--pulse' : 'status-dot--alert'}`}
+                aria-hidden="true"
+              />
+              <span className={cameraActive ? 'status-label--good' : 'status-label--alert'}>
+                {cameraActive ? 'CAMERA LIVE' : 'CAMERA OFF'}
+              </span>
+            </span>
+
+            {/* 2. MediaPipe */}
+            <span className="status-item">
+              <span
+                className={`status-dot ${pipelineReady ? 'status-dot--good' : pipelineLoading ? 'status-dot--muted' : 'status-dot--alert'}`}
+                aria-hidden="true"
+              />
+              <span className={pipelineReady ? 'status-label--good' : pipelineLoading ? 'status-label--muted' : 'status-label--alert'}>
+                {pipelineReady ? 'MEDIAPIPE READY' : pipelineLoading ? 'MEDIAPIPE INIT...' : 'MEDIAPIPE ERROR'}
+              </span>
+            </span>
+
+            {/* 3. Posture verified */}
+            <span className="status-item">
+              <span
+                className={`status-dot ${hasSeenInstructions ? 'status-dot--good' : 'status-dot--muted'}`}
+                aria-hidden="true"
+              />
+              <span className={hasSeenInstructions ? 'status-label--good' : 'status-label--muted'}>
+                {hasSeenInstructions ? 'POSTURE VERIFIED' : 'SETUP PENDING'}
+              </span>
+            </span>
+
+            {/* 4. Demo tab */}
+            <span className="status-item">
+              <span
+                className={`status-dot ${demoConnected ? 'status-dot--good status-dot--pulse' : 'status-dot--muted'}`}
+                aria-hidden="true"
+              />
+              <span className={demoConnected ? 'status-label--good' : 'status-label--muted'}>
+                {demoConnected ? 'DEMO CONNECTED' : 'DEMO WAITING'}
+              </span>
+            </span>
+          </div>
+        </div>
+
+        {/* Header Actions */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          {hasSeenInstructions && (
+            <>
+              <button
+                id="btn-launch-demo-header"
+                className="btn btn-primary"
+                onClick={launchDemoTab}
+                style={{
+                  fontSize: '0.75rem',
+                  padding: '0.35rem 0.85rem',
+                  fontFamily: 'var(--font-mono)'
+                }}
+              >
+                Launch Demo Workspace ↗
+              </button>
+              <button
+                id="btn-review-posture-guide"
+                onClick={handleRestartSetup}
+                style={{
+                  background: 'transparent',
+                  border: '1px solid var(--ink-border)',
+                  borderRadius: '3px',
+                  padding: '0.35rem 0.75rem',
+                  color: 'var(--ink-muted)',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '0.75rem',
+                  letterSpacing: '0.04em',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.color = 'var(--ink-text)';
+                  e.currentTarget.style.borderColor = 'var(--ink-text)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.color = 'var(--ink-muted)';
+                  e.currentTarget.style.borderColor = 'var(--ink-border)';
+                }}
+              >
+                [ RESTART SETUP ]
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Posture Setup Wizard Screen / Step (Orientation) */}
+      {!hasSeenInstructions ? (
+        <div style={{ marginBottom: '2rem' }}>
+          <PostureInstructions
+            postureMetrics={postureMetrics}
+            onComplete={handleCompleteInstructions}
+            onDismiss={handleDismissInstructions}
+          />
+        </div>
+      ) : (
+        /* Posture Locked / Monitoring Active Post-Setup Banner */
+        <div
+          style={{
+            backgroundColor: 'var(--ink-panel)',
+            border: '1px solid rgba(79,216,196,0.2)',
+            borderLeft: '3px solid var(--signal-good)',
+            borderRadius: '4px',
+            padding: '1rem 1.25rem',
+            marginBottom: '1.5rem',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '1rem'
+          }}
+          role="status"
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <span
+                style={{
                   width: '6px',
                   height: '6px',
-                  backgroundColor: cameraActive ? 'var(--signal-good)' : 'var(--signal-alert)',
-                  display: 'inline-block'
-                }} />
-                {cameraActive ? 'CAMERA: LIVE' : 'CAMERA: OFF'}
+                  backgroundColor: 'var(--signal-good)',
+                  display: 'inline-block',
+                  flexShrink: 0,
+                }}
+                aria-hidden="true"
+              />
+              <span
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '0.72rem',
+                  fontWeight: 700,
+                  letterSpacing: '0.08em',
+                  color: 'var(--signal-good)'
+                }}
+              >
+                POSTURE VERIFIED — MONITORING ACTIVE
               </span>
-
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem', color: pipelineReady ? 'var(--ink-text)' : 'var(--ink-muted)' }}>
-                <span style={{
-                  width: '6px',
-                  height: '6px',
-                  backgroundColor: pipelineReady ? 'var(--signal-good)' : pipelineLoading ? 'var(--ink-muted)' : 'var(--signal-alert)',
-                  display: 'inline-block'
-                }} />
-                {pipelineReady ? 'MEDIAPIPE: READY' : pipelineLoading ? 'MEDIAPIPE: INITIALIZING' : 'MEDIAPIPE: ERROR'}
-              </span>
+            </div>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '1rem',
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.68rem',
+              color: 'var(--ink-muted)',
+              flexWrap: 'wrap'
+            }}>
+              <span>TAB 01 // MONITOR <span style={{ color: 'var(--signal-good)' }}>● ACTIVE</span></span>
+              <span style={{ color: 'var(--ink-border)' }}>·</span>
+              <span>TAB 02 // WORKSPACE <span style={{ color: demoConnected ? 'var(--signal-good)' : 'var(--ink-muted)' }}>{demoConnected ? '● CONNECTED' : '○ WAITING'}</span></span>
             </div>
           </div>
 
-          <p style={{ color: 'var(--ink-muted)', fontSize: '0.8rem', fontFamily: 'var(--font-mono)', marginTop: '0.5rem', margin: 0 }}>
-            BROADCAST CHANNEL : <span style={{ color: 'var(--ink-text)' }}>posturesync</span> (same-origin)
-          </p>
-        </div>
-
-        {/* Persistent review posture guide button */}
-        {hasSeenInstructions && (
           <button
-            id="btn-review-posture-guide"
-            onClick={handleReopenInstructions}
+            id="btn-launch-demo-banner"
+            className="btn btn-secondary"
+            onClick={launchDemoTab}
             style={{
-              background: 'transparent',
-              border: '1px solid var(--ink-border)',
-              borderRadius: '3px',
-              padding: '0.35rem 0.75rem',
-              color: 'var(--ink-muted)',
-              fontFamily: 'var(--font-mono)',
-              fontSize: '0.75rem',
-              letterSpacing: '0.04em',
-              cursor: 'pointer',
-              transition: 'all 0.15s ease'
+              fontSize: '0.72rem',
+              padding: '0.35rem 0.85rem',
+              fontFamily: 'var(--font-mono)'
             }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.color = 'var(--ink-text)';
-              e.currentTarget.style.borderColor = 'var(--ink-text)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.color = 'var(--ink-muted)';
-              e.currentTarget.style.borderColor = 'var(--ink-border)';
-            }}
+            aria-label="Open Demo Workspace in a new tab"
           >
-            [ REVIEW POSTURE GUIDE ]
+            Open Demo Workspace &#8599;
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* Posture Instructions Screen / Step (Orientation) */}
-      {!hasSeenInstructions && (
-        <div style={{ marginBottom: '2rem' }}>
-          <PostureInstructions
-            hasVisiblePerson={hasVisiblePerson}
-            onContinue={handleCompleteInstructions}
-            onDismiss={handleDismissInstructions}
-          />
+      {/* Popup Blocked Warning Notice */}
+      {popupBlocked && (
+        <div
+          style={{
+            backgroundColor: 'rgba(255, 107, 74, 0.12)',
+            border: '1px solid var(--signal-alert)',
+            borderRadius: '4px',
+            padding: '0.85rem 1.25rem',
+            marginBottom: '1.5rem',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '1rem',
+            color: 'var(--ink-text)',
+            fontFamily: 'var(--font-mono)',
+            fontSize: '0.75rem'
+          }}
+        >
+          <span>Demo tab could not be opened automatically. Use OPEN DEMO WORKSPACE to continue.</span>
+          <button
+            className="btn btn-danger"
+            onClick={launchDemoTab}
+            style={{ fontSize: '0.75rem', padding: '0.35rem 0.85rem' }}
+          >
+            OPEN DEMO WORKSPACE
+          </button>
         </div>
       )}
 
       {/* Main 2-Column Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.35fr) minmax(0, 1fr)', gap: '1.5rem' }}>
+      <div className="dashboard-grid">
         {/* Left Column: Live Webcam View with Canvas Landmark Overlay */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           <div className="glass-panel" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column' }}>
@@ -308,17 +575,97 @@ export const Dashboard: React.FC = () => {
               )}
             </div>
 
+            {/* Compact Head Count Indicator directly below webcam */}
+            <div
+              style={{
+                marginTop: '0.85rem',
+                padding: '0.65rem 0.85rem',
+                backgroundColor: 'var(--ink-bg)',
+                border: '1px solid var(--ink-border)',
+                borderLeft:
+                  detectionMode === 'multi_person'
+                    ? '3px solid var(--signal-alert)'
+                    : detectionMode === 'single_person'
+                    ? '3px solid var(--signal-good)'
+                    : '3px solid var(--ink-border)',
+                borderRadius: '2px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                fontFamily: 'var(--font-mono)'
+              }}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                <span style={{ fontSize: '0.68rem', letterSpacing: '0.08em', color: 'var(--ink-muted)' }}>
+                  HEAD COUNT
+                </span>
+                <span
+                  style={{
+                    fontSize: '1.25rem',
+                    fontWeight: 700,
+                    lineHeight: 1.1,
+                    color:
+                      detectionMode === 'multi_person'
+                        ? 'var(--signal-alert)'
+                        : detectionMode === 'single_person'
+                        ? 'var(--signal-good)'
+                        : 'var(--ink-muted)'
+                  }}
+                >
+                  {personCount}
+                </span>
+              </div>
+
+              <div style={{ textAlign: 'right' }}>
+                {detectionMode === 'single_person' && (
+                  <span
+                    style={{
+                      fontSize: '0.72rem',
+                      fontWeight: 600,
+                      letterSpacing: '0.06em',
+                      color: 'var(--signal-good)'
+                    }}
+                  >
+                    POSTURE MONITORING ACTIVE
+                  </span>
+                )}
+                {detectionMode === 'multi_person' && (
+                  <span
+                    style={{
+                      fontSize: '0.72rem',
+                      fontWeight: 600,
+                      letterSpacing: '0.06em',
+                      color: 'var(--signal-alert)'
+                    }}
+                  >
+                    MULTI-PERSON MODE
+                  </span>
+                )}
+                {detectionMode === 'no_person' && (
+                  <span
+                    style={{
+                      fontSize: '0.72rem',
+                      color: 'var(--ink-muted)',
+                      letterSpacing: '0.04em'
+                    }}
+                  >
+                    NO SUBJECT DETECTED
+                  </span>
+                )}
+              </div>
+            </div>
+
             <div style={{
-              marginTop: '0.85rem',
+              marginTop: '0.65rem',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
               fontFamily: 'var(--font-mono)',
-              fontSize: '0.75rem',
+              fontSize: '0.72rem',
               color: 'var(--ink-muted)'
             }}>
               <span>INFERENCE RATE : <span style={{ color: 'var(--ink-text)' }}>{measuredFps} FPS</span></span>
-              <span>{poseDetected ? '33 LANDMARKS ACTIVE' : 'NO SUBJECT DETECTED'}</span>
+              <span>{poseDetected ? '33 LANDMARKS ACTIVE' : 'POSE SENSOR PAUSED'}</span>
             </div>
           </div>
 

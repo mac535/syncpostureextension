@@ -3,49 +3,59 @@ import { Link } from 'react-router-dom';
 
 export const Home: React.FC = () => {
   return (
-    <div style={{ maxWidth: '1080px', margin: '2rem auto 4rem', padding: '0 1.5rem', fontFamily: 'var(--font-display)' }}>
-      {/* 1. HERO: Technical Overview & Posture Assessment Diagram */}
-      <section style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
-        gap: '2.5rem',
-        alignItems: 'center',
-        marginBottom: '4rem',
-        borderBottom: '1px solid var(--ink-border)',
-        paddingBottom: '3.5rem'
-      }}>
-        {/* Left Side: Copy & Route Actions */}
+    <div style={{ maxWidth: '1080px', margin: '2rem auto 4.5rem', padding: '0 1.5rem', fontFamily: 'var(--font-display)' }}>
+      {/* =========================================================================
+          SECTION 1 — HERO: What syncPosture is & Angular Deflection Concept
+          ========================================================================= */}
+      <section
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+          gap: '2.5rem',
+          alignItems: 'center',
+          marginBottom: '4rem',
+          borderBottom: '1px solid var(--ink-border)',
+          paddingBottom: '3.5rem'
+        }}
+      >
+        {/* Left Column: Mission, Value & Direct CTAs */}
         <div>
-          <div style={{
-            fontFamily: 'var(--font-mono)',
-            fontSize: '0.75rem',
-            letterSpacing: '0.1em',
-            color: 'var(--ink-muted)',
-            marginBottom: '0.75rem'
-          }}>
+          <div
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.75rem',
+              letterSpacing: '0.1em',
+              color: 'var(--ink-muted)',
+              marginBottom: '0.75rem'
+            }}
+          >
             ON-DEVICE ERGONOMIC MONITORING
           </div>
 
-          <h1 style={{
-            fontFamily: 'var(--font-display)',
-            fontSize: '2.35rem',
-            fontWeight: 600,
-            lineHeight: 1.15,
-            letterSpacing: '-0.02em',
-            color: 'var(--ink-text)',
-            margin: '0 0 1rem'
-          }}>
-            Real-time postural angle analysis on your machine.
+          <h1
+            style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: '2.35rem',
+              fontWeight: 600,
+              lineHeight: 1.15,
+              letterSpacing: '-0.02em',
+              color: 'var(--ink-text)',
+              margin: '0 0 1rem'
+            }}
+          >
+            Real-time posture intelligence, running entirely on your machine.
           </h1>
 
-          <p style={{
-            color: 'var(--ink-muted)',
-            fontSize: '1rem',
-            lineHeight: 1.6,
-            margin: '0 0 2rem',
-            maxWidth: '520px'
-          }}>
-            A zero-server ergonomics loop running on your hardware: Tab 1 runs continuous vision inference, emitting low-latency posture events over BroadcastChannel to Tab 2.
+          <p
+            style={{
+              color: 'var(--ink-muted)',
+              fontSize: '1rem',
+              lineHeight: 1.6,
+              margin: '0 0 2rem',
+              maxWidth: '520px'
+            }}
+          >
+            syncPosture uses on-device vision to detect sustained posture deviation and turn it into a real-time workspace intervention — without sending video to a server.
           </p>
 
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.85rem' }}>
@@ -58,15 +68,17 @@ export const Home: React.FC = () => {
           </div>
         </div>
 
-        {/* Right Side: Static SVG Technical Assessment Diagram */}
-        <div style={{
-          backgroundColor: 'var(--ink-panel)',
-          border: '1px solid var(--ink-border)',
-          borderRadius: '4px',
-          padding: '1.5rem',
-          display: 'flex',
-          flexDirection: 'column'
-        }}>
+        {/* Right Column: Angular Deflection SVG Instrument Schema */}
+        <div
+          style={{
+            backgroundColor: 'var(--ink-panel)',
+            border: '1px solid var(--ink-border)',
+            borderRadius: '4px',
+            padding: '1.5rem',
+            display: 'flex',
+            flexDirection: 'column'
+          }}
+        >
           <div className="panel-header" style={{ marginBottom: '1rem' }}>
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', letterSpacing: '0.06em', color: 'var(--ink-text)' }}>
               ANGULAR DEFLECTION SCHEMA
@@ -84,7 +96,6 @@ export const Home: React.FC = () => {
               style={{ width: '100%', height: 'auto', display: 'block' }}
             >
               <defs>
-                {/* Dash pattern for vertical reference plumb lines */}
                 <marker
                   id="arc-arrow"
                   markerWidth="6"
@@ -99,7 +110,6 @@ export const Home: React.FC = () => {
 
               {/* ---------------- LEFT FIGURE (Upright, Good Posture) ---------------- */}
               <g id="figure-upright">
-                {/* Status Label Above */}
                 <text
                   x="115"
                   y="28"
@@ -134,7 +144,6 @@ export const Home: React.FC = () => {
                 />
 
                 {/* Seated Figure Skeleton (Upright) */}
-                {/* Head (Profile Circle) */}
                 <circle
                   cx="115"
                   cy="70"
@@ -143,10 +152,8 @@ export const Home: React.FC = () => {
                   strokeWidth="1.75"
                   fill="none"
                 />
-                {/* Ear Point (Joint Dot) */}
                 <circle cx="115" cy="73" r="2.5" fill="var(--signal-good)" />
 
-                {/* Neck & Spine Path */}
                 <path
                   d="M 115 86 L 115 110 L 105 168 L 105 202 L 148 202"
                   stroke="var(--ink-text)"
@@ -156,7 +163,6 @@ export const Home: React.FC = () => {
                   strokeLinejoin="round"
                 />
 
-                {/* Shoulder & Arm (Relaxed) */}
                 <circle cx="115" cy="110" r="2.5" fill="var(--signal-good)" />
                 <path
                   d="M 115 110 L 126 150 L 146 150"
@@ -167,11 +173,8 @@ export const Home: React.FC = () => {
                   strokeLinejoin="round"
                 />
                 <circle cx="126" cy="150" r="2" fill="var(--ink-muted)" />
-
-                {/* Hip Joint Dot */}
                 <circle cx="105" cy="202" r="2.5" fill="var(--ink-muted)" />
 
-                {/* Angle Metric Below */}
                 <text
                   x="115"
                   y="235"
@@ -209,7 +212,6 @@ export const Home: React.FC = () => {
 
               {/* ---------------- RIGHT FIGURE (Forward Lean, Slouching) ---------------- */}
               <g id="figure-slouching">
-                {/* Status Label Above */}
                 <text
                   x="345"
                   y="28"
@@ -223,7 +225,6 @@ export const Home: React.FC = () => {
                   [ SLOUCHING · SEV 2 ]
                 </text>
 
-                {/* Chair Seat & Backrest Reference (hairline) */}
                 <path
                   d="M 280 160 L 280 205 L 375 205"
                   stroke="var(--ink-border)"
@@ -231,7 +232,6 @@ export const Home: React.FC = () => {
                   fill="none"
                 />
 
-                {/* Vertical Reference Plumb Line at Shoulder (dashed) */}
                 <line
                   x1="340"
                   y1="52"
@@ -242,7 +242,6 @@ export const Home: React.FC = () => {
                   strokeDasharray="3 3"
                 />
 
-                {/* Deflection Ray (dashed) following actual ear position to shoulder */}
                 <line
                   x1="375"
                   y1="68"
@@ -253,7 +252,6 @@ export const Home: React.FC = () => {
                   strokeDasharray="3 3"
                 />
 
-                {/* Deflection Arc between Vertical and Deflection Ray */}
                 <path
                   d="M 340 76 A 44 44 0 0 1 364 84"
                   stroke="var(--signal-alert)"
@@ -262,7 +260,6 @@ export const Home: React.FC = () => {
                   markerEnd="url(#arc-arrow)"
                 />
 
-                {/* Angular Degree Label at Arc */}
                 <text
                   x="376"
                   y="92"
@@ -274,8 +271,6 @@ export const Home: React.FC = () => {
                   34°
                 </text>
 
-                {/* Seated Figure Skeleton (Slouching / Forward Head) */}
-                {/* Head (Profile Circle - shifted forward and downward) */}
                 <circle
                   cx="375"
                   cy="68"
@@ -284,10 +279,8 @@ export const Home: React.FC = () => {
                   strokeWidth="1.75"
                   fill="none"
                 />
-                {/* Ear Point (Joint Dot) */}
                 <circle cx="375" cy="71" r="2.5" fill="var(--signal-alert)" />
 
-                {/* Neck & Kyphotic Spine Path */}
                 <path
                   d="M 368 83 Q 346 102 340 120 Q 320 156 332 202 L 375 202"
                   stroke="var(--ink-text)"
@@ -297,10 +290,7 @@ export const Home: React.FC = () => {
                   strokeLinejoin="round"
                 />
 
-                {/* Shoulder Joint Dot (protracted forward) */}
                 <circle cx="340" cy="120" r="2.5" fill="var(--signal-alert)" />
-
-                {/* Reaching Arm */}
                 <path
                   d="M 340 120 L 362 160 L 388 160"
                   stroke="var(--ink-text)"
@@ -310,11 +300,8 @@ export const Home: React.FC = () => {
                   strokeLinejoin="round"
                 />
                 <circle cx="362" cy="160" r="2" fill="var(--ink-muted)" />
-
-                {/* Hip Joint Dot */}
                 <circle cx="332" cy="202" r="2.5" fill="var(--ink-muted)" />
 
-                {/* Angle Metric Below */}
                 <text
                   x="345"
                   y="235"
@@ -343,280 +330,527 @@ export const Home: React.FC = () => {
         </div>
       </section>
 
-      {/* 2. ARCHITECTURE HEADER */}
-      <section style={{ marginBottom: '2rem' }}>
-        <div style={{
-          fontFamily: 'var(--font-mono)',
-          fontSize: '0.75rem',
-          letterSpacing: '0.1em',
-          color: 'var(--ink-muted)',
-          marginBottom: '0.5rem'
-        }}>
-          TWO TABS, ONE CHANNEL
-        </div>
-        <h2 style={{
-          fontFamily: 'var(--font-display)',
-          fontSize: '1.45rem',
-          fontWeight: 600,
-          lineHeight: 1.35,
-          color: 'var(--ink-text)',
-          margin: 0,
-          maxWidth: '720px'
-        }}>
-          A zero-server ergonomics loop running on your hardware: Tab 1 runs continuous vision inference, emitting low-latency posture events over BroadcastChannel to Tab 2.
-        </h2>
-      </section>
-
-      {/* 3. SVG TECHNICAL ARCHITECTURE DIAGRAM */}
-      <section style={{
-        marginBottom: '3rem',
-        border: '1px solid var(--ink-border)',
-        backgroundColor: 'var(--ink-panel)',
-        borderRadius: '4px',
-        padding: '1.75rem 1.25rem'
-      }}>
-        <div style={{ width: '100%', overflowX: 'auto' }}>
-          <svg
-            viewBox="0 0 800 120"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-            style={{ width: '100%', minWidth: '640px', height: 'auto', display: 'block' }}
+      {/* =========================================================================
+          SECTION 2 — SIGNAL PIPELINE: Engineering Signal Diagram
+          ========================================================================= */}
+      <section style={{ marginBottom: '4rem' }}>
+        <div style={{ marginBottom: '1.75rem' }}>
+          <div
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.75rem',
+              letterSpacing: '0.1em',
+              color: 'var(--ink-muted)',
+              marginBottom: '0.5rem'
+            }}
           >
-            <defs>
-              <marker
-                id="diagram-arrow"
-                markerWidth="8"
-                markerHeight="8"
-                refX="6"
-                refY="4"
-                orient="auto"
+            SIGNAL PIPELINE
+          </div>
+          <h2
+            style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: '1.45rem',
+              fontWeight: 600,
+              lineHeight: 1.35,
+              color: 'var(--ink-text)',
+              margin: 0
+            }}
+          >
+            From camera frame to ergonomic intervention.
+          </h2>
+        </div>
+
+        {/* 4-Stage Horizontal Instrument Flow */}
+        <div
+          style={{
+            backgroundColor: 'var(--ink-panel)',
+            border: '1px solid var(--ink-border)',
+            borderRadius: '4px',
+            overflow: 'hidden'
+          }}
+        >
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))'
+            }}
+          >
+            {[
+              {
+                step: '01',
+                phase: 'CAPTURE',
+                label: 'Webcam frame',
+                detail: 'Raw visual stream via getUserMedia'
+              },
+              {
+                step: '02',
+                phase: 'INTERPRET',
+                label: 'Pose + facial landmarks',
+                detail: 'Sub-35ms MediaPipe spatial inference'
+              },
+              {
+                step: '03',
+                phase: 'CLASSIFY',
+                label: 'Posture geometry + temporal smoothing',
+                detail: 'Multi-axis vectors with EMA filtering'
+              },
+              {
+                step: '04',
+                phase: 'INTERVENE',
+                label: 'Posture signal → workspace response',
+                detail: 'Progressive defocus on sustained deviation'
+              }
+            ].map((stage, idx) => (
+              <div
+                key={stage.step}
+                style={{
+                  padding: '1.5rem',
+                  position: 'relative',
+                  borderRight: idx < 3 ? '1px solid var(--ink-border)' : 'none',
+                  borderBottom: '1px solid var(--ink-border)'
+                }}
               >
-                <path d="M1 1L7 4L1 7" fill="none" stroke="#8CA6BC" strokeWidth="1.2" />
-              </marker>
-            </defs>
+                {/* Header: Stage index and phase */}
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'baseline',
+                    justifyContent: 'space-between',
+                    marginBottom: '1rem'
+                  }}
+                >
+                  <span
+                    style={{
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: '0.725rem',
+                      fontWeight: 500,
+                      color: 'var(--signal-good)',
+                      letterSpacing: '0.08em'
+                    }}
+                  >
+                    {stage.step} // {stage.phase}
+                  </span>
+                  {idx < 3 && (
+                    <span
+                      style={{
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: '0.75rem',
+                        color: 'var(--ink-muted)',
+                        opacity: 0.5
+                      }}
+                      aria-hidden="true"
+                    >
+                      →
+                    </span>
+                  )}
+                </div>
 
-            {/* Dashboard Tab Node */}
-            <rect
-              x="20"
-              y="20"
-              width="230"
-              height="80"
-              rx="2"
-              fill="#0F2138"
-              stroke="#2C4A66"
-              strokeWidth="1"
-            />
-            <text x="35" y="44" fill="#8CA6BC" fontSize="11" fontFamily="var(--font-mono)" letterSpacing="0.05em">
-              TAB 01 : DASHBOARD
-            </text>
-            <text x="35" y="66" fill="#E7EEF3" fontSize="13" fontFamily="var(--font-display)" fontWeight="600">
-              Webcam Feed + MediaPipe
-            </text>
-            <text x="35" y="84" fill="#8CA6BC" fontSize="11" fontFamily="var(--font-mono)">
-              Angles & Landmark Engine
-            </text>
+                <div
+                  style={{
+                    fontFamily: 'var(--font-display)',
+                    fontSize: '0.95rem',
+                    fontWeight: 600,
+                    color: 'var(--ink-text)',
+                    lineHeight: 1.4,
+                    marginBottom: '0.35rem'
+                  }}
+                >
+                  {stage.label}
+                </div>
 
-            {/* Interconnecting Arrow Line */}
-            <line
-              x1="250"
-              y1="60"
-              x2="540"
-              y2="60"
-              stroke="#2C4A66"
-              strokeWidth="1.5"
-              strokeDasharray="4 4"
-            />
-            <line
-              x1="340"
-              y1="60"
-              x2="450"
-              y2="60"
-              stroke="#8CA6BC"
-              strokeWidth="1"
-              markerEnd="url(#diagram-arrow)"
-            />
+                <div
+                  style={{
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: '0.75rem',
+                    color: 'var(--ink-muted)',
+                    lineHeight: 1.45
+                  }}
+                >
+                  {stage.detail}
+                </div>
+              </div>
+            ))}
+          </div>
 
-            {/* Channel Protocol Label */}
-            <rect
-              x="320"
-              y="32"
-              width="150"
-              height="22"
-              rx="2"
-              fill="#16304A"
-              stroke="#2C4A66"
-              strokeWidth="1"
-            />
-            <text
-              x="395"
-              y="47"
-              textAnchor="middle"
-              fill="#4FD8C4"
-              fontSize="10"
-              fontFamily="var(--font-mono)"
-              letterSpacing="0.08em"
+          {/* Technical bus annotation footer */}
+          <div
+            style={{
+              padding: '0.8rem 1.25rem',
+              backgroundColor: 'rgba(15, 33, 56, 0.65)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexWrap: 'wrap',
+              gap: '0.5rem'
+            }}
+          >
+            <span
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: '0.725rem',
+                letterSpacing: '0.08em',
+                color: 'var(--ink-muted)'
+              }}
             >
-              BroadcastChannel
-            </text>
-            <text
-              x="395"
-              y="80"
-              textAnchor="middle"
-              fill="#8CA6BC"
-              fontSize="10"
-              fontFamily="var(--font-mono)"
+              INTER-TAB SIGNAL BUS // BroadcastChannel // posturesync
+            </span>
+            <span
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: '0.725rem',
+                color: 'var(--signal-good)'
+              }}
             >
-              posturesync (same-origin)
-            </text>
-
-            {/* Demo Tab Node */}
-            <rect
-              x="550"
-              y="20"
-              width="230"
-              height="80"
-              rx="2"
-              fill="#0F2138"
-              stroke="#2C4A66"
-              strokeWidth="1"
-            />
-            <text x="565" y="44" fill="#8CA6BC" fontSize="11" fontFamily="var(--font-mono)" letterSpacing="0.05em">
-              TAB 02 : DEMO ROUTE
-            </text>
-            <text x="565" y="66" fill="#E7EEF3" fontSize="13" fontFamily="var(--font-display)" fontWeight="600">
-              Quiet Place Workspace
-            </text>
-            <text x="565" y="84" fill="#8CA6BC" fontSize="11" fontFamily="var(--font-mono)">
-              Degradation & Blur Reaction
-            </text>
-          </svg>
+              SAME-ORIGIN EVENT DISPATCH
+            </span>
+          </div>
         </div>
       </section>
 
-      {/* 4. TWO FLAT PANELS (Describing what each tab does) */}
-      <section style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
-        gap: '1.5rem',
-        marginBottom: '3.5rem'
-      }}>
-        {/* Panel A: Dashboard */}
-        <div className="glass-panel" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-          <div>
-            <div className="panel-header">
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', letterSpacing: '0.08em', color: 'var(--ink-muted)' }}>
-                INSTRUMENT PANEL
-              </span>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--ink-muted)' }}>
-                PORT : 01
-              </span>
-            </div>
-            <h3 style={{ fontSize: '1.15rem', fontWeight: 600, color: 'var(--ink-text)', margin: '0 0 0.5rem' }}>
-              Tab 1: Vision Dashboard
-            </h3>
-            <p style={{ color: 'var(--ink-muted)', fontSize: '0.875rem', lineHeight: 1.6, margin: '0 0 1.5rem' }}>
-              Captures live local video, runs real-time MediaPipe body and facial landmark models, computes angular cervical deflection, and broadcasts state payloads.
-            </p>
+      {/* =========================================================================
+          SECTION 3 — WHAT THE ENGINE OBSERVES: 2x2 Posture Geometry Matrix
+          ========================================================================= */}
+      <section style={{ marginBottom: '4rem' }}>
+        <div style={{ marginBottom: '1.75rem' }}>
+          <div
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.75rem',
+              letterSpacing: '0.1em',
+              color: 'var(--ink-muted)',
+              marginBottom: '0.5rem'
+            }}
+          >
+            POSTURE GEOMETRY
           </div>
-          <Link to="/dashboard" className="btn btn-primary" style={{ width: '100%' }}>
-            Open Dashboard Panel
-          </Link>
+          <h2
+            style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: '1.45rem',
+              fontWeight: 600,
+              lineHeight: 1.35,
+              color: 'var(--ink-text)',
+              margin: 0
+            }}
+          >
+            What the vision engine actually observes.
+          </h2>
         </div>
 
-        {/* Panel B: Demo Workspace */}
-        <div className="glass-panel" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-          <div>
-            <div className="panel-header">
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', letterSpacing: '0.08em', color: 'var(--ink-muted)' }}>
-                TARGET CLIENT
-              </span>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--ink-muted)' }}>
-                PORT : 02
-              </span>
+        {/* 2x2 Technical Matrix */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
+            gap: '1rem',
+            marginBottom: '1.25rem'
+          }}
+        >
+          {[
+            {
+              index: '01',
+              metric: 'HEAD ALIGNMENT',
+              symbol: 'headForwardOffset',
+              desc: 'Forward head displacement relative to the shoulder reference, normalized to shoulder width.'
+            },
+            {
+              index: '02',
+              metric: 'LATERAL LEAN',
+              symbol: 'lateralTiltDeg',
+              desc: 'Torso deviation from the vertical reference plumb line through the shoulder and hip midpoint.'
+            },
+            {
+              index: '03',
+              metric: 'SHOULDER BALANCE',
+              symbol: 'shoulderTiltDeg',
+              desc: 'Tilt of the shoulder line relative to horizontal, tracking asymmetric elevation or drooping.'
+            },
+            {
+              index: '04',
+              metric: 'HEAD–TORSO ALIGNMENT',
+              symbol: 'headTorsoAngleDeg',
+              desc: 'Angular relationship between the head vector and torso reference, isolating cervical spine flexion.'
+            }
+          ].map((item) => (
+            <div
+              key={item.index}
+              style={{
+                backgroundColor: 'var(--ink-panel)',
+                border: '1px solid var(--ink-border)',
+                borderRadius: '4px',
+                padding: '1.35rem 1.5rem',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between'
+              }}
+            >
+              <div>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'baseline',
+                    justifyContent: 'space-between',
+                    marginBottom: '0.75rem'
+                  }}
+                >
+                  <span
+                    style={{
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      color: 'var(--signal-good)',
+                      letterSpacing: '0.04em'
+                    }}
+                  >
+                    {item.index}
+                  </span>
+                  <span
+                    style={{
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: '0.7rem',
+                      color: 'var(--ink-muted)',
+                      letterSpacing: '0.04em'
+                    }}
+                  >
+                    {item.symbol}
+                  </span>
+                </div>
+
+                <div
+                  style={{
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: '0.85rem',
+                    fontWeight: 600,
+                    letterSpacing: '0.04em',
+                    color: 'var(--ink-text)',
+                    marginBottom: '0.5rem'
+                  }}
+                >
+                  {item.metric}
+                </div>
+
+                <p
+                  style={{
+                    fontFamily: 'var(--font-display)',
+                    fontSize: '0.85rem',
+                    color: 'var(--ink-muted)',
+                    lineHeight: 1.55,
+                    margin: 0
+                  }}
+                >
+                  {item.desc}
+                </p>
+              </div>
             </div>
-            <h3 style={{ fontSize: '1.15rem', fontWeight: 600, color: 'var(--ink-text)', margin: '0 0 0.5rem' }}>
-              Tab 2: Quiet Place Demo
-            </h3>
-            <p style={{ color: 'var(--ink-muted)', fontSize: '0.875rem', lineHeight: 1.6, margin: '0 0 1.5rem' }}>
-              Simulates your everyday workspace. Subscribes to BroadcastChannel telemetry and gently blurs readability when poor posture persists.
-            </p>
-          </div>
-          <Link to="/demo" className="btn btn-secondary" style={{ width: '100%' }}>
-            Open Demo Environment
-          </Link>
+          ))}
+        </div>
+
+        {/* Small Technical Note */}
+        <div
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: '0.75rem',
+            color: 'var(--ink-muted)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            padding: '0.5rem 0'
+          }}
+        >
+          <span style={{ color: 'var(--signal-good)' }}>// NOTE:</span>
+          <span>The system smooths frame-level measurements and waits for sustained deviation before triggering an intervention.</span>
         </div>
       </section>
 
-      {/* 5. SPECIFICATION LIST (Hairline-rule separated rows) */}
-      <section style={{
-        borderTop: '1px solid var(--ink-border)',
-        paddingTop: '1.5rem'
-      }}>
-        <div style={{
-          fontFamily: 'var(--font-mono)',
-          fontSize: '0.75rem',
-          letterSpacing: '0.1em',
-          color: 'var(--ink-muted)',
-          marginBottom: '1rem'
-        }}>
-          SYSTEM SPECIFICATIONS
+      {/* =========================================================================
+          SECTION 4 — LOCAL BY DESIGN: Architectural Privacy & Boundary Table
+          ========================================================================= */}
+      <section
+        style={{
+          marginBottom: '4rem',
+          borderTop: '1px solid var(--ink-border)',
+          paddingTop: '2.5rem'
+        }}
+      >
+        <div style={{ marginBottom: '1.75rem' }}>
+          <div
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.75rem',
+              letterSpacing: '0.1em',
+              color: 'var(--ink-muted)',
+              marginBottom: '0.5rem'
+            }}
+          >
+            LOCAL BY DESIGN
+          </div>
+          <h2
+            style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: '1.45rem',
+              fontWeight: 600,
+              lineHeight: 1.35,
+              color: 'var(--ink-text)',
+              margin: 0
+            }}
+          >
+            Privacy is part of the architecture.
+          </h2>
         </div>
 
+        {/* Technical Specification Table */}
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           {[
             {
-              label: 'PROCESSING ARCHITECTURE',
-              value: '100% on-device inference via WebAssembly & WebGL. Zero network requests.'
+              label: 'COMPUTATION',
+              value: 'On-device vision inference',
+              note: 'Posture inference runs locally after the required vision assets are available to the browser.'
             },
             {
-              label: 'IMAGE PERSISTENCE',
-              value: 'Zero video or image frames are ever recorded, written to disk, or transmitted.'
+              label: 'VIDEO',
+              value: 'Frames are not intentionally recorded or transmitted by the application',
+              note: 'Camera memory buffers remain strictly isolated within browser WebGL and CPU contexts.'
             },
             {
-              label: 'INTER-PROCESS BUS',
-              value: 'Native browser BroadcastChannel API — zero WebSockets, servers, or cloud dependencies.'
+              label: 'SIGNAL BUS',
+              value: 'Native BroadcastChannel for same-origin tab communication',
+              note: 'Zero telemetry leaks outside the local browser instance; no external relay required.'
             },
             {
-              label: 'EXTENSIONS REQUIRED',
-              value: 'None. Operates purely inside modern Chromium, Gecko, or WebKit browser runtimes.'
-            },
-            {
-              label: 'LATENCY PROFILE',
-              value: 'Sub-35ms frame-to-classification turnaround with exponential moving average smoothing.'
+              label: 'INFRASTRUCTURE',
+              value: 'No application backend or WebSocket dependency',
+              note: 'Operates entirely client-side without authentication servers, databases, or remote workers.'
             }
-          ].map((row, idx) => (
+          ].map((row) => (
             <div
-              key={idx}
+              key={row.label}
               style={{
                 display: 'grid',
                 gridTemplateColumns: 'minmax(180px, 240px) 1fr',
-                padding: '0.85rem 0',
+                padding: '1.1rem 0',
                 borderBottom: '1px solid var(--ink-border)',
                 alignItems: 'baseline',
-                gap: '1rem'
+                gap: '1.5rem'
               }}
             >
-              <span style={{
-                fontFamily: 'var(--font-mono)',
-                fontSize: '0.75rem',
-                color: 'var(--ink-muted)',
-                letterSpacing: '0.04em'
-              }}>
+              <span
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '0.75rem',
+                  color: 'var(--ink-muted)',
+                  letterSpacing: '0.06em'
+                }}
+              >
                 {row.label}
               </span>
-              <span style={{
-                fontFamily: 'var(--font-display)',
-                fontSize: '0.875rem',
-                color: 'var(--ink-text)',
-                lineHeight: 1.5
-              }}>
-                {row.value}
-              </span>
+              <div>
+                <div
+                  style={{
+                    fontFamily: 'var(--font-display)',
+                    fontSize: '0.925rem',
+                    fontWeight: 500,
+                    color: 'var(--ink-text)',
+                    lineHeight: 1.45,
+                    marginBottom: '0.2rem'
+                  }}
+                >
+                  {row.value}
+                </div>
+                <div
+                  style={{
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: '0.75rem',
+                    color: 'var(--ink-muted)',
+                    lineHeight: 1.45
+                  }}
+                >
+                  {row.note}
+                </div>
+              </div>
             </div>
           ))}
+        </div>
+      </section>
+
+      {/* =========================================================================
+          SECTION 5 — FINAL ACTION STRIP: Action Execution & Status
+          ========================================================================= */}
+      <section
+        style={{
+          backgroundColor: 'var(--ink-panel)',
+          border: '1px solid var(--ink-border)',
+          borderRadius: '4px',
+          padding: '2rem 2.25rem'
+        }}
+      >
+        <div style={{ maxWidth: '640px', marginBottom: '1.75rem' }}>
+          <div
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.75rem',
+              letterSpacing: '0.1em',
+              color: 'var(--ink-muted)',
+              marginBottom: '0.5rem'
+            }}
+          >
+            READY TO RUN
+          </div>
+          <h2
+            style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: '1.45rem',
+              fontWeight: 600,
+              lineHeight: 1.3,
+              color: 'var(--ink-text)',
+              margin: '0 0 0.65rem'
+            }}
+          >
+            See the signal become an intervention.
+          </h2>
+          <p
+            style={{
+              color: 'var(--ink-muted)',
+              fontSize: '0.9rem',
+              lineHeight: 1.55,
+              margin: 0
+            }}
+          >
+            Open the dashboard to inspect live posture telemetry, or launch the demo workspace to see how sustained deviation affects the target interface.
+          </p>
+        </div>
+
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            gap: '0.85rem',
+            marginBottom: '1.5rem'
+          }}
+        >
+          <Link to="/dashboard" className="btn btn-primary">
+            Open Dashboard
+          </Link>
+          <Link to="/demo" className="btn btn-secondary">
+            Open Demo
+          </Link>
+        </div>
+
+        <div
+          style={{
+            borderTop: '1px solid var(--ink-border)',
+            paddingTop: '0.85rem',
+            fontFamily: 'var(--font-mono)',
+            fontSize: '0.7rem',
+            letterSpacing: '0.08em',
+            color: 'var(--ink-muted)'
+          }}
+        >
+          LOCAL INFERENCE / REAL-TIME TELEMETRY / CLIENT-SIDE PROCESSING
         </div>
       </section>
     </div>
   );
 };
+
 

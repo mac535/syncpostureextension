@@ -52,7 +52,10 @@ src/
     Header.tsx
     Hero.tsx
     Journal.tsx
+    PostureInstructions.tsx
   lib/
+    hooks/
+      useVisionFeed.ts
     mediapipe/
       visionPipeline.ts
     posture/
@@ -60,6 +63,7 @@ src/
       postureClassifier.ts
       postureMetrics.ts
       smoother.ts
+      temporalDebounce.ts
     channel.ts
   pages/
     Dashboard.tsx
@@ -907,6 +911,643 @@ export const Journal: React.FC = () => {
 };
 </file>
 
+<file path="src/components/PostureInstructions.tsx">
+import React, { useEffect, useRef, useState } from 'react';
+import type { PostureMetrics } from '../lib/posture/postureMetrics';
+import { POSTURE_THRESHOLDS } from '../lib/posture/postureClassifier';
+
+export interface PostureInstructionsProps {
+  postureMetrics: PostureMetrics | null;
+  onComplete: () => void;
+  onDismiss?: () => void;
+  isOverlay?: boolean;
+}
+
+export type SetupStep = 1 | 2 | 3 | 4 | 5;
+
+export const PostureInstructions: React.FC<PostureInstructionsProps> = ({
+  postureMetrics,
+  onComplete,
+  onDismiss,
+}) => {
+  const [currentStep, setCurrentStep] = useState<SetupStep>(1);
+  // Flash message shown briefly after a step is accepted before advancing
+  const [acceptedFlash, setAcceptedFlash] = useState<string | null>(null);
+
+  // Step 5 Hold timer state (ms)
+  const REQUIRED_HOLD_MS = 3000;
+  const [holdProgressMs, setHoldProgressMs] = useState<number>(0);
+  const holdStartTimestampRef = useRef<number | null>(null);
+
+  // ---------------------------------------------------------------------------
+  // Condition checks corresponding to the fixed ergonomic thresholds
+  // ---------------------------------------------------------------------------
+  const isStep1Valid = Boolean(
+    postureMetrics?.isValid &&
+    (postureMetrics?.confidence ?? 0) >= POSTURE_THRESHOLDS.MIN_CONFIDENCE
+  );
+
+  const isStep2Valid = Boolean(
+    isStep1Valid &&
+    postureMetrics?.shoulderTiltDeg !== null &&
+    postureMetrics?.shoulderTiltDeg !== undefined &&
+    postureMetrics.shoulderTiltDeg < POSTURE_THRESHOLDS.SHOULDER_TILT_MILD
+  );
+
+  const isStep3Valid = Boolean(
+    isStep2Valid &&
+    postureMetrics?.lateralTiltDeg !== null &&
+    postureMetrics?.lateralTiltDeg !== undefined &&
+    postureMetrics.lateralTiltDeg < POSTURE_THRESHOLDS.LATERAL_TILT_MILD
+  );
+
+  const isStep4HeadForwardValid = Boolean(
+    postureMetrics?.headForwardOffset !== null &&
+    postureMetrics?.headForwardOffset !== undefined &&
+    postureMetrics.headForwardOffset < POSTURE_THRESHOLDS.HEAD_FORWARD_MILD
+  );
+
+  const isStep4HeadAngleValid = Boolean(
+    postureMetrics?.headTorsoAngleDeg !== null &&
+    postureMetrics?.headTorsoAngleDeg !== undefined &&
+    postureMetrics.headTorsoAngleDeg < POSTURE_THRESHOLDS.HEAD_TORSO_ANGLE_MILD
+  );
+
+  const isStep4Valid = Boolean(isStep3Valid && isStep4HeadForwardValid && isStep4HeadAngleValid);
+
+  const isAllPostureAcceptable = isStep1Valid && isStep2Valid && isStep3Valid && isStep4Valid;
+
+  // ---------------------------------------------------------------------------
+  // Automatic step progression for Steps 1 through 4 with acceptance flash
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    if (currentStep === 1 && isStep1Valid) {
+      setAcceptedFlash('FRAME LOCKED');
+      timer = setTimeout(() => {
+        setAcceptedFlash(null);
+        setCurrentStep(2);
+      }, 700);
+    } else if (currentStep === 2 && isStep2Valid) {
+      setAcceptedFlash('SHOULDER ALIGNMENT ACCEPTED');
+      timer = setTimeout(() => {
+        setAcceptedFlash(null);
+        setCurrentStep(3);
+      }, 700);
+    } else if (currentStep === 3 && isStep3Valid) {
+      setAcceptedFlash('TORSO ALIGNMENT ACCEPTED');
+      timer = setTimeout(() => {
+        setAcceptedFlash(null);
+        setCurrentStep(4);
+      }, 700);
+    } else if (currentStep === 4 && isStep4Valid) {
+      setAcceptedFlash('HEAD ALIGNMENT ACCEPTED');
+      timer = setTimeout(() => {
+        setAcceptedFlash(null);
+        setCurrentStep(5);
+      }, 700);
+    }
+
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [currentStep, isStep1Valid, isStep2Valid, isStep3Valid, isStep4Valid]);
+
+  // ---------------------------------------------------------------------------
+  // Step 5 Hold Timer Management
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (currentStep !== 5) {
+      setHoldProgressMs(0);
+      holdStartTimestampRef.current = null;
+      return;
+    }
+
+    if (holdProgressMs >= REQUIRED_HOLD_MS) return;
+
+    let animFrame: number;
+
+    const tick = () => {
+      if (!isAllPostureAcceptable) {
+        holdStartTimestampRef.current = null;
+        setHoldProgressMs(0);
+        animFrame = requestAnimationFrame(tick);
+        return;
+      }
+
+      const now = performance.now();
+      if (holdStartTimestampRef.current === null) {
+        holdStartTimestampRef.current = now;
+      }
+
+      const elapsed = Math.min(REQUIRED_HOLD_MS, now - holdStartTimestampRef.current);
+      setHoldProgressMs(elapsed);
+
+      if (elapsed < REQUIRED_HOLD_MS) {
+        animFrame = requestAnimationFrame(tick);
+      }
+    };
+
+    animFrame = requestAnimationFrame(tick);
+
+    return () => {
+      cancelAnimationFrame(animFrame);
+    };
+  }, [currentStep, isAllPostureAcceptable, holdProgressMs]);
+
+  const handleRestart = () => {
+    setCurrentStep(1);
+    setAcceptedFlash(null);
+    setHoldProgressMs(0);
+    holdStartTimestampRef.current = null;
+  };
+
+  const isHoldComplete = currentStep === 5 && holdProgressMs >= REQUIRED_HOLD_MS;
+
+  // ---------------------------------------------------------------------------
+  // Per-step content: instruction + the ONE relevant metric to show
+  // ---------------------------------------------------------------------------
+  type StepContent = {
+    title: string;
+    instruction: string;
+    guidance: string;
+    metricLabel: string;
+    metricValue: string;
+    metricLimit: string;
+    isAccepted: boolean;
+  };
+
+  const getStepContent = (): StepContent => {
+    switch (currentStep) {
+      case 1:
+        return {
+          title: 'FRAME YOURSELF',
+          instruction: 'Position yourself in the camera frame.',
+          guidance: 'Move back until your head, shoulders and upper torso are clearly visible.',
+          metricLabel: 'PERSON DETECTION',
+          metricValue: isStep1Valid ? 'PRESENT' : 'SEARCHING...',
+          metricLimit: 'Visible head + shoulders required',
+          isAccepted: isStep1Valid,
+        };
+      case 2:
+        return {
+          title: 'LEVEL YOUR SHOULDERS',
+          instruction: 'Bring your shoulders to the same height.',
+          guidance: 'Raise or lower one shoulder until the shoulder line is level.',
+          metricLabel: 'SHOULDER TILT',
+          metricValue:
+            postureMetrics?.shoulderTiltDeg !== null && postureMetrics?.shoulderTiltDeg !== undefined
+              ? `${postureMetrics.shoulderTiltDeg}\u00b0`
+              : '\u2014',
+          metricLimit: `Target: < ${POSTURE_THRESHOLDS.SHOULDER_TILT_MILD}\u00b0`,
+          isAccepted: isStep2Valid,
+        };
+      case 3:
+        return {
+          title: 'CENTER YOUR TORSO',
+          instruction: 'Sit upright with your torso centered.',
+          guidance: 'Bring your torso back toward the center without leaning left or right.',
+          metricLabel: 'LATERAL TILT',
+          metricValue:
+            postureMetrics?.lateralTiltDeg !== null && postureMetrics?.lateralTiltDeg !== undefined
+              ? `${postureMetrics.lateralTiltDeg}\u00b0`
+              : '\u2014',
+          metricLimit: `Target: < ${POSTURE_THRESHOLDS.LATERAL_TILT_MILD}\u00b0`,
+          isAccepted: isStep3Valid,
+        };
+      case 4:
+        return {
+          title: 'ALIGN YOUR HEAD',
+          instruction: 'Bring your head back over your shoulders.',
+          guidance: !isStep4HeadForwardValid
+            ? 'Move your head slightly back toward your shoulders.'
+            : 'Raise your chin to reduce the forward neck angle.',
+          metricLabel: 'HEAD FORWARD OFFSET',
+          metricValue:
+            postureMetrics?.headForwardOffset !== null && postureMetrics?.headForwardOffset !== undefined
+              ? `${postureMetrics.headForwardOffset}`
+              : '\u2014',
+          metricLimit: `Target: < ${POSTURE_THRESHOLDS.HEAD_FORWARD_MILD}`,
+          isAccepted: isStep4Valid,
+        };
+      case 5:
+        return {
+          title: 'HOLD POSTURE',
+          instruction: 'Maintain this position for 3 seconds.',
+          guidance: isHoldComplete
+            ? 'Posture verified. Monitoring is now active.'
+            : isAllPostureAcceptable
+            ? 'Hold steady. Verifying alignment...'
+            : !isStep1Valid
+            ? 'Return to the camera frame.'
+            : !isStep2Valid
+            ? 'Re-level your shoulders.'
+            : !isStep3Valid
+            ? 'Re-center your torso.'
+            : 'Re-align your head.',
+          metricLabel: 'HOLD PROGRESS',
+          metricValue: isHoldComplete
+            ? 'VERIFIED'
+            : isAllPostureAcceptable
+            ? `${(holdProgressMs / 1000).toFixed(1)}s`
+            : 'DEVIATED',
+          metricLimit: 'Continuous 3.0 s hold',
+          isAccepted: isHoldComplete,
+        };
+    }
+  };
+
+  const step = getStepContent();
+
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
+  return (
+    <div
+      className="glass-panel"
+      style={{
+        padding: '1.75rem',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '1.25rem',
+      }}
+    >
+      {/* â”€â”€ Top header row â”€â”€ */}
+      <div
+        className="panel-header"
+        style={{ margin: 0, paddingBottom: '0.75rem' }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+          <span
+            style={{
+              width: '6px',
+              height: '6px',
+              backgroundColor: isHoldComplete ? 'var(--signal-good)' : 'var(--ink-muted)',
+              display: 'inline-block',
+              flexShrink: 0,
+            }}
+            aria-hidden="true"
+          />
+          <span
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.72rem',
+              letterSpacing: '0.08em',
+              color: 'var(--ink-muted)',
+              fontWeight: 500,
+            }}
+          >
+            POSTURE SETUP
+          </span>
+          <span
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.72rem',
+              letterSpacing: '0.08em',
+              color: 'var(--ink-text)',
+              fontWeight: 600,
+            }}
+          >
+            // STEP 0{currentStep} / 05
+          </span>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <button
+            onClick={handleRestart}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.7rem',
+              color: 'var(--ink-muted)',
+              cursor: 'pointer',
+              padding: '2px 6px',
+              letterSpacing: '0.04em',
+            }}
+            title="Restart posture setup from Step 1"
+            aria-label="Restart posture setup"
+          >
+            [ RESTART ]
+          </button>
+
+          {onDismiss && (
+            <button
+              onClick={onDismiss}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                fontFamily: 'var(--font-mono)',
+                fontSize: '0.7rem',
+                color: 'var(--ink-muted)',
+                cursor: 'pointer',
+                padding: '2px 6px',
+                letterSpacing: '0.04em',
+              }}
+              title="Dismiss setup guide"
+              aria-label="Dismiss setup guide"
+            >
+              [ SKIP ]
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* â”€â”€ Progress rail â”€â”€ */}
+      <div
+        className="setup-progress-rail"
+        style={{ gridTemplateColumns: `repeat(5, 1fr)` }}
+        role="progressbar"
+        aria-valuenow={currentStep}
+        aria-valuemin={1}
+        aria-valuemax={5}
+        aria-label={`Setup step ${currentStep} of 5`}
+      >
+        {([1, 2, 3, 4, 5] as SetupStep[]).map((s) => {
+          const isPassed = currentStep > s || (s === 5 && isHoldComplete);
+          const isCurrent = currentStep === s;
+          return (
+            <div
+              key={s}
+              className={
+                'setup-progress-rail__segment ' +
+                (isPassed
+                  ? 'setup-progress-rail__segment--done'
+                  : isCurrent
+                  ? 'setup-progress-rail__segment--active'
+                  : 'setup-progress-rail__segment--pending')
+              }
+            />
+          );
+        })}
+      </div>
+
+      {/* â”€â”€ Main instruction â”€â”€ */}
+      <div>
+        <div
+          className="setup-step-title"
+          style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: '1.3rem',
+            fontWeight: 600,
+            color: 'var(--ink-text)',
+            marginBottom: '0.4rem',
+            lineHeight: 1.3,
+          }}
+        >
+          {step.title}
+        </div>
+        <p
+          style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: '0.95rem',
+            lineHeight: 1.55,
+            color: 'var(--ink-text)',
+            margin: 0,
+          }}
+        >
+          {step.instruction}
+        </p>
+      </div>
+
+      {/* â”€â”€ Focused metric callout (single metric per step) â”€â”€ */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          padding: '1rem 1.25rem',
+          backgroundColor: 'var(--ink-bg)',
+          border: `1px solid ${step.isAccepted ? 'rgba(79,216,196,0.3)' : 'var(--ink-border)'}`,
+          borderLeft: `3px solid ${step.isAccepted || acceptedFlash ? 'var(--signal-good)' : 'var(--ink-border)'}`,
+          borderRadius: '2px',
+          transition: 'border-color 0.2s ease',
+          flexWrap: 'wrap',
+          gap: '1rem',
+        }}
+      >
+        <div className="metric-callout">
+          <div className="metric-callout__label">{step.metricLabel}</div>
+          <div
+            className={
+              'metric-callout__value ' +
+              (step.isAccepted || acceptedFlash
+                ? 'metric-callout__value--good'
+                : step.metricValue === 'SEARCHING...' || step.metricValue === 'DEVIATED'
+                ? 'metric-callout__value--alert'
+                : 'metric-callout__value--muted')
+            }
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            {step.metricValue}
+          </div>
+          <div className="metric-callout__limit">{step.metricLimit}</div>
+        </div>
+
+        {/* Status chip */}
+        <div style={{ marginLeft: 'auto' }}>
+          {acceptedFlash ? (
+            <span className="step-accepted-flash" role="status">
+              &#10003; {acceptedFlash}
+            </span>
+          ) : (
+            <span
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: '0.72rem',
+                fontWeight: 600,
+                letterSpacing: '0.05em',
+                color: step.isAccepted ? 'var(--signal-good)' : 'var(--ink-muted)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+              }}
+              role="status"
+            >
+              <span
+                style={{
+                  width: '5px',
+                  height: '5px',
+                  borderRadius: '50%',
+                  backgroundColor: step.isAccepted ? 'var(--signal-good)' : 'var(--ink-border)',
+                  display: 'inline-block',
+                  flexShrink: 0,
+                }}
+                aria-hidden="true"
+              />
+              {step.isAccepted ? 'ACCEPTED' : 'REQUIRED'}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* â”€â”€ Step 5: Hold progress bar â”€â”€ */}
+      {currentStep === 5 && (
+        <div
+          style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}
+          role="timer"
+          aria-label={`Hold progress: ${(holdProgressMs / 1000).toFixed(1)} of 3.0 seconds`}
+        >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.72rem',
+              color: 'var(--ink-muted)',
+            }}
+          >
+            <span>HOLDING POSTURE</span>
+            <span style={{ color: isHoldComplete ? 'var(--signal-good)' : 'var(--ink-text)', fontWeight: 600 }}>
+              {(holdProgressMs / 1000).toFixed(1)} / 3.0 s
+            </span>
+          </div>
+          <div
+            style={{
+              width: '100%',
+              height: '6px',
+              backgroundColor: 'var(--ink-panel)',
+              border: '1px solid var(--ink-border)',
+              borderRadius: '2px',
+              overflow: 'hidden',
+            }}
+          >
+            <div
+              style={{
+                width: `${(holdProgressMs / REQUIRED_HOLD_MS) * 100}%`,
+                height: '100%',
+                backgroundColor: isHoldComplete ? 'var(--signal-good)' : 'var(--ink-text)',
+                transition: 'width 0.05s linear, background-color 0.25s ease',
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* â”€â”€ Guidance line â”€â”€ */}
+      <div
+        style={{
+          fontFamily: 'var(--font-mono)',
+          fontSize: '0.72rem',
+          lineHeight: 1.5,
+          color: step.isAccepted ? 'var(--signal-good)' : 'var(--ink-muted)',
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: '0.5rem',
+        }}
+        role="status"
+        aria-live="polite"
+      >
+        <span style={{ flexShrink: 0 }}>// GUIDANCE :</span>
+        <span>{step.guidance}</span>
+      </div>
+
+      {/* â”€â”€ COMPLETION STATE (Step 5 hold complete) â”€â”€ */}
+      {isHoldComplete && (
+        <div
+          style={{
+            borderTop: '1px solid var(--ink-border)',
+            paddingTop: '1.25rem',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '1.25rem',
+          }}
+          role="region"
+          aria-label="Posture verified. Ready to launch demo workspace."
+        >
+          {/* Verified headline */}
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.4rem' }}>
+              <span
+                style={{
+                  width: '6px',
+                  height: '6px',
+                  backgroundColor: 'var(--signal-good)',
+                  display: 'inline-block',
+                  flexShrink: 0,
+                }}
+                aria-hidden="true"
+              />
+              <span
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '0.72rem',
+                  fontWeight: 700,
+                  letterSpacing: '0.08em',
+                  color: 'var(--signal-good)',
+                }}
+              >
+                POSTURE VERIFIED
+              </span>
+            </div>
+            <p
+              style={{
+                fontFamily: 'var(--font-display)',
+                fontSize: '0.875rem',
+                color: 'var(--ink-muted)',
+                lineHeight: 1.5,
+                margin: 0,
+              }}
+            >
+              Reference posture satisfied. Background monitoring is now active.
+            </p>
+          </div>
+
+          {/* Two-tab architecture diagram */}
+          <div
+            className="two-tab-diagram"
+            aria-label="Tab layout: Tab 01 Monitor stays active, Tab 02 Workspace opens"
+          >
+            <div className="tab-box tab-box--active">
+              <div className="tab-box__label">TAB 01</div>
+              <div className="tab-box__name">MONITOR</div>
+              <div className="tab-box__status">&#9679; STAYS ACTIVE</div>
+            </div>
+            <div className="tab-arrow" aria-hidden="true">
+              <div>&#8596;</div>
+              <div style={{ fontSize: '0.6rem', marginTop: '2px', color: 'var(--ink-border)' }}>BC</div>
+            </div>
+            <div className="tab-box">
+              <div className="tab-box__label">TAB 02</div>
+              <div className="tab-box__name">WORKSPACE</div>
+              <div
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '0.65rem',
+                  color: 'var(--ink-muted)',
+                  marginTop: '0.2rem',
+                }}
+              >
+                OPENS NOW &#8599;
+              </div>
+            </div>
+          </div>
+
+          {/* Launch button */}
+          <button
+            id="btn-launch-demo-completed"
+            className="btn btn-primary"
+            onClick={onComplete}
+            style={{
+              width: '100%',
+              padding: '0.75rem 1.25rem',
+              fontFamily: 'var(--font-display)',
+              fontSize: '0.9rem',
+              letterSpacing: '0.02em',
+            }}
+            aria-label="Launch Demo Workspace in a new tab"
+          >
+            Launch Demo Workspace &#8599;
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+</file>
+
 <file path="src/lib/mediapipe/visionPipeline.ts">
 import {
   FilesetResolver,
@@ -1204,150 +1845,6 @@ export function isValidLandmark(
   // If visibility is populated and below threshold, reject. If undefined/null, accept if finite coordinates.
   if (typeof lm.visibility === 'number' && lm.visibility < minVisibility) return false;
   return true;
-}
-</file>
-
-<file path="src/lib/posture/postureClassifier.ts">
-import type { PostureMetrics } from './postureMetrics';
-
-/**
- * Baseline posture thresholds for preliminary classification.
- */
-export const POSTURE_THRESHOLDS = {
-  MIN_CONFIDENCE: 0.25,
-  
-  // Forward slouching thresholds
-  HEAD_FORWARD_MILD: 0.16,
-  HEAD_FORWARD_SIGNIFICANT: 0.26,
-  HEAD_FORWARD_SEVERE: 0.38,
-
-  HEAD_TORSO_ANGLE_MILD: 18.0,
-  HEAD_TORSO_ANGLE_SIGNIFICANT: 28.0,
-  HEAD_TORSO_ANGLE_SEVERE: 38.0,
-
-  // Lateral leaning thresholds
-  LATERAL_TILT_MILD: 6.0,
-  LATERAL_TILT_SIGNIFICANT: 12.0,
-  LATERAL_TILT_SEVERE: 18.0,
-
-  SHOULDER_TILT_MILD: 5.0,
-  SHOULDER_TILT_SIGNIFICANT: 9.0,
-  SHOULDER_TILT_SEVERE: 14.0
-} as const;
-
-export type PostureStatus = 'good' | 'slouching' | 'leaning' | 'insufficient_data';
-export type PostureSeverity = 0 | 1 | 2 | 3;
-
-export interface PostureClassification {
-  status: PostureStatus;
-  severity: PostureSeverity;
-  reason?: string;
-}
-
-/**
- * Classifies posture metrics into ergonomic states (good, slouching, leaning, or insufficient_data).
- */
-export function classifyPosture(metrics: PostureMetrics): PostureClassification {
-  // 1. Check data sufficiency & presence
-  if (!metrics.isValid || metrics.confidence < POSTURE_THRESHOLDS.MIN_CONFIDENCE) {
-    return {
-      status: 'insufficient_data',
-      severity: 0,
-      reason: 'Body landmarks not sufficiently visible or out of frame'
-    };
-  }
-
-  // Check if at least one primary posture angle is calculable
-  const hasLateral = metrics.lateralTiltDeg !== null;
-  const hasShoulder = metrics.shoulderTiltDeg !== null;
-  const hasHeadOffset = metrics.headForwardOffset !== null;
-  const hasHeadAngle = metrics.headTorsoAngleDeg !== null;
-
-  if (!hasLateral && !hasShoulder && !hasHeadOffset && !hasHeadAngle) {
-    return {
-      status: 'insufficient_data',
-      severity: 0,
-      reason: 'Key upper body landmarks missing'
-    };
-  }
-
-  // 2. Evaluate Lateral Leaning Severity
-  let leanSeverity: PostureSeverity = 0;
-  const lateralTilt = metrics.lateralTiltDeg ?? 0;
-  const shoulderTilt = metrics.shoulderTiltDeg ?? 0;
-
-  if (
-    (hasLateral && lateralTilt >= POSTURE_THRESHOLDS.LATERAL_TILT_SEVERE) ||
-    (hasShoulder && shoulderTilt >= POSTURE_THRESHOLDS.SHOULDER_TILT_SEVERE)
-  ) {
-    leanSeverity = 3;
-  } else if (
-    (hasLateral && lateralTilt >= POSTURE_THRESHOLDS.LATERAL_TILT_SIGNIFICANT) ||
-    (hasShoulder && shoulderTilt >= POSTURE_THRESHOLDS.SHOULDER_TILT_SIGNIFICANT)
-  ) {
-    leanSeverity = 2;
-  } else if (
-    (hasLateral && lateralTilt >= POSTURE_THRESHOLDS.LATERAL_TILT_MILD) ||
-    (hasShoulder && shoulderTilt >= POSTURE_THRESHOLDS.SHOULDER_TILT_MILD)
-  ) {
-    leanSeverity = 1;
-  }
-
-  // 3. Evaluate Forward Slouching Severity
-  let slouchSeverity: PostureSeverity = 0;
-  const headOffset = metrics.headForwardOffset ?? 0;
-  const headAngle = metrics.headTorsoAngleDeg ?? 0;
-
-  if (
-    (hasHeadOffset && headOffset >= POSTURE_THRESHOLDS.HEAD_FORWARD_SEVERE) ||
-    (hasHeadAngle && headAngle >= POSTURE_THRESHOLDS.HEAD_TORSO_ANGLE_SEVERE)
-  ) {
-    slouchSeverity = 3;
-  } else if (
-    (hasHeadOffset && headOffset >= POSTURE_THRESHOLDS.HEAD_FORWARD_SIGNIFICANT) ||
-    (hasHeadAngle && headAngle >= POSTURE_THRESHOLDS.HEAD_TORSO_ANGLE_SIGNIFICANT)
-  ) {
-    slouchSeverity = 2;
-  } else if (
-    (hasHeadOffset && headOffset >= POSTURE_THRESHOLDS.HEAD_FORWARD_MILD) ||
-    (hasHeadAngle && headAngle >= POSTURE_THRESHOLDS.HEAD_TORSO_ANGLE_MILD)
-  ) {
-    slouchSeverity = 1;
-  }
-
-  // 4. Primary Posture Determination
-  if (leanSeverity === 0 && slouchSeverity === 0) {
-    return {
-      status: 'good',
-      severity: 0,
-      reason: 'Upright and well aligned'
-    };
-  }
-
-  if (leanSeverity >= slouchSeverity && leanSeverity > 0) {
-    const directionStr = metrics.leanDirection !== 'neutral' ? ` (${metrics.leanDirection})` : '';
-    const details = [
-      hasLateral ? `Torso tilt: ${metrics.lateralTiltDeg}°${directionStr}` : null,
-      hasShoulder ? `Shoulder tilt: ${metrics.shoulderTiltDeg}°` : null
-    ].filter(Boolean).join(', ');
-
-    return {
-      status: 'leaning',
-      severity: leanSeverity,
-      reason: details || 'Lateral torso lean detected'
-    };
-  } else {
-    const details = [
-      hasHeadOffset ? `Head offset: ${metrics.headForwardOffset}` : null,
-      hasHeadAngle ? `Head-torso angle: ${metrics.headTorsoAngleDeg}°` : null
-    ].filter(Boolean).join(', ');
-
-    return {
-      status: 'slouching',
-      severity: slouchSeverity,
-      reason: details || 'Forward head slouch detected'
-    };
-  }
 }
 </file>
 
@@ -1672,6 +2169,187 @@ export class PostureMetricsSmoother {
 }
 </file>
 
+<file path="src/lib/posture/temporalDebounce.ts">
+/**
+ * temporalDebounce.ts
+ *
+ * PostureDebouncer: smooths the raw deviationScore using an EMA and only
+ * fires a "posture bad" notification once the smoothed score has remained
+ * above the trigger threshold for a sustained hold duration.  Recovery (clear)
+ * is gated by a separate cooldown timer so a brief straightening-up does not
+ * prematurely clear an active alert.
+ *
+ * No per-user calibration — thresholds are fixed relative to the same
+ * POSTURE_THRESHOLDS reference values used by classifyPosture().
+ */
+
+export interface DebouncerConfig {
+  /**
+   * EMA alpha for the per-frame score smoothing (0–1).
+   * Lower = more smoothing, slower to react.
+   * Default: 0.20
+   */
+  emaAlpha?: number;
+
+  /**
+   * Smoothed score must stay ABOVE this value for `holdMs` before a trigger fires.
+   * Default: 0.30
+   */
+  triggerThreshold?: number;
+
+  /**
+   * Smoothed score must stay BELOW this value for `cooldownMs` before a
+   * trigger is cleared.
+   * Default: 0.15
+   */
+  clearThreshold?: number;
+
+  /**
+   * Milliseconds the smoothed score must be above triggerThreshold before
+   * we fire the triggered callback.
+   * Default: 2500 ms
+   */
+  holdMs?: number;
+
+  /**
+   * Milliseconds the smoothed score must be below clearThreshold before we
+   * fire the cleared callback and allow a new trigger cycle.
+   * Default: 3500 ms
+   */
+  cooldownMs?: number;
+}
+
+export type DebouncerState = 'idle' | 'accumulating' | 'triggered' | 'recovering';
+
+export interface DebouncerCallbacks {
+  /** Called once when the hold period completes — posture is bad enough and sustained. */
+  onTriggered: (smoothedScore: number) => void;
+  /** Called once when recovery cooldown completes — posture is good again. */
+  onCleared: () => void;
+  /**
+   * Called every frame with the latest smoothed score (useful for live UI gauges).
+   * Never suppressed by debounce state.
+   */
+  onScoreUpdate?: (smoothedScore: number) => void;
+}
+
+const DEFAULTS: Required<DebouncerConfig> = {
+  emaAlpha: 0.20,
+  triggerThreshold: 0.30,
+  clearThreshold: 0.15,
+  holdMs: 2500,
+  cooldownMs: 3500,
+};
+
+export class PostureDebouncer {
+  private config: Required<DebouncerConfig>;
+  private callbacks: DebouncerCallbacks;
+
+  private smoothedScore: number = 0;
+  private state: DebouncerState = 'idle';
+
+  /** Timestamp (ms, from Date.now()) when we entered accumulating. */
+  private accumulatingStart: number | null = null;
+  /** Timestamp when we entered recovering. */
+  private recoveringStart: number | null = null;
+
+  constructor(callbacks: DebouncerCallbacks, config: DebouncerConfig = {}) {
+    this.config = { ...DEFAULTS, ...config };
+    this.callbacks = callbacks;
+  }
+
+  /**
+   * Feed the latest raw deviationScore (0.0–1.0).
+   * Call this once per inference frame.
+   *
+   * @param rawScore    Raw deviationScore from computeDeviationScore()
+   * @param nowMs       Current time in ms (defaults to Date.now())
+   */
+  update(rawScore: number, nowMs: number = Date.now()): void {
+    // 1. EMA smoothing
+    this.smoothedScore =
+      this.config.emaAlpha * rawScore +
+      (1 - this.config.emaAlpha) * this.smoothedScore;
+
+    const s = this.smoothedScore;
+
+    // 2. Emit live score to UI regardless of debounce state
+    this.callbacks.onScoreUpdate?.(Number(s.toFixed(3)));
+
+    // 3. State machine
+    switch (this.state) {
+      case 'idle': {
+        if (s >= this.config.triggerThreshold) {
+          this.state = 'accumulating';
+          this.accumulatingStart = nowMs;
+        }
+        break;
+      }
+
+      case 'accumulating': {
+        if (s < this.config.triggerThreshold) {
+          // Score dropped — abandon accumulation, go back to idle
+          this.state = 'idle';
+          this.accumulatingStart = null;
+        } else if (
+          this.accumulatingStart !== null &&
+          nowMs - this.accumulatingStart >= this.config.holdMs
+        ) {
+          // Held long enough — fire!
+          this.state = 'triggered';
+          this.accumulatingStart = null;
+          this.callbacks.onTriggered(Number(s.toFixed(3)));
+        }
+        break;
+      }
+
+      case 'triggered': {
+        if (s < this.config.clearThreshold) {
+          // Score dropped low enough — begin recovery cooldown
+          this.state = 'recovering';
+          this.recoveringStart = nowMs;
+        }
+        break;
+      }
+
+      case 'recovering': {
+        if (s >= this.config.clearThreshold) {
+          // Score crept back up during recovery window — abort recovery
+          this.state = 'triggered';
+          this.recoveringStart = null;
+        } else if (
+          this.recoveringStart !== null &&
+          nowMs - this.recoveringStart >= this.config.cooldownMs
+        ) {
+          // Stayed clear long enough — fire cleared callback, back to idle
+          this.state = 'idle';
+          this.recoveringStart = null;
+          this.callbacks.onCleared();
+        }
+        break;
+      }
+    }
+  }
+
+  /** Reset all state (e.g., when camera feed stops). */
+  reset(): void {
+    this.smoothedScore = 0;
+    this.state = 'idle';
+    this.accumulatingStart = null;
+    this.recoveringStart = null;
+  }
+
+  /** Read-only accessors for diagnostics / UI. */
+  get currentSmoothedScore(): number {
+    return this.smoothedScore;
+  }
+
+  get currentState(): DebouncerState {
+    return this.state;
+  }
+}
+</file>
+
 <file path="src/lib/channel.ts">
 import type { SyncMessage } from '../types/messages';
 
@@ -1713,156 +2391,6 @@ export function onMessage(callback: (message: SyncMessage) => void): () => void 
     channel.removeEventListener('message', handler);
   };
 }
-</file>
-
-<file path="src/pages/Demo.tsx">
-import React, { useEffect, useState } from 'react';
-import { send, onMessage } from '../lib/channel';
-import type { SyncMessage } from '../types/messages';
-import { Header } from '../components/Header';
-import { Hero } from '../components/Hero';
-import { Features } from '../components/Features';
-import { Discovery } from '../components/Discovery';
-import { Journal } from '../components/Journal';
-import { FinalCTA } from '../components/FinalCTA';
-import { Footer } from '../components/Footer';
-import { AlertCircle } from 'lucide-react';
-
-export const Demo: React.FC = () => {
-  const [isInterventionActive, setIsInterventionActive] = useState<boolean>(false);
-  const [activeAlertDetail, setActiveAlertDetail] = useState<string | null>(null);
-
-  useEffect(() => {
-    // Notify any open dashboard that this demo tab is active
-    send({ type: 'DEMO_READY' });
-
-    // Listen on BroadcastChannel for intervention commands
-    const unsubscribe = onMessage((msg: SyncMessage) => {
-      if (msg.type === 'POSTURE_STATUS') {
-        if (msg.severity >= 2) {
-          setIsInterventionActive(true);
-          setActiveAlertDetail(`Posture Alert: ${msg.status.toUpperCase()} (Severity ${msg.severity}) detected`);
-        } else {
-          setIsInterventionActive(false);
-          setActiveAlertDetail(null);
-        }
-      } else if (msg.type === 'CLEAR_INTERVENTION') {
-        setIsInterventionActive(false);
-        setActiveAlertDetail(null);
-      } else if (msg.type === 'BLINK_ALERT') {
-        setIsInterventionActive(true);
-        setActiveAlertDetail(`Blink Alert: Low blink rate (${msg.blinksPerMin}/min). Rest your eyes.`);
-      }
-    });
-
-    return () => {
-      unsubscribe();
-    };
-  }, []);
-
-  return (
-    <div className="qp-page">
-      {/* Visual Intervention Overlay when Bad Posture is Triggered */}
-      {isInterventionActive && (
-        <div className="intervention-overlay">
-          <div style={{
-            backgroundColor: 'var(--qp-cream-light)',
-            border: '1px solid rgba(233, 111, 103, 0.4)',
-            padding: 'var(--space-32) var(--space-48)',
-            borderRadius: '16px',
-            boxShadow: '0 24px 48px rgba(23, 59, 53, 0.2), 0 0 40px rgba(233, 111, 103, 0.25)',
-            textAlign: 'center',
-            maxWidth: '520px',
-            pointerEvents: 'auto',
-            color: 'var(--qp-forest)'
-          }}>
-            <div style={{
-              width: '56px',
-              height: '56px',
-              borderRadius: '50%',
-              backgroundColor: 'rgba(233, 111, 103, 0.15)',
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: 'var(--qp-coral)',
-              marginBottom: 'var(--space-16)'
-            }}>
-              <AlertCircle size={32} strokeWidth={2} />
-            </div>
-            <h2 className="qp-heading-3" style={{ marginBottom: 'var(--space-8)' }}>
-              Posture Notice
-            </h2>
-            <p style={{ color: 'var(--qp-coral)', fontWeight: 600, fontSize: '0.95rem', marginBottom: 'var(--space-12)' }}>
-              {activeAlertDetail}
-            </p>
-            <p className="qp-body-sm" style={{ color: 'var(--qp-forest-muted)' }}>
-              Gently align your spine, drop your shoulders, and look straight ahead. Clear the alert on your dashboard tab to resume reading.
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* Main Content Area (blurs when intervention is triggered) */}
-      <div className={`demo-content-wrapper ${isInterventionActive ? 'blurred' : ''}`}>
-        {/* Navigation Header */}
-        <Header />
-
-        {/* Hero Section */}
-        <Hero />
-
-        {/* Philosophy & Core Features Section */}
-        <Features />
-
-        {/* Places / Discovery Section */}
-        <Discovery />
-
-        {/* Journal / Editorial Section */}
-        <Journal />
-
-        {/* Closing Calm CTA Section */}
-        <FinalCTA />
-
-        {/* Footer */}
-        <Footer />
-      </div>
-    </div>
-  );
-};
-</file>
-
-<file path="src/types/messages.ts">
-export type PostureStatusType = 'good' | 'slouching' | 'leaning';
-export type SeverityLevel = 0 | 1 | 2 | 3;
-
-export interface PostureStatusMessage {
-  type: 'POSTURE_STATUS';
-  status: PostureStatusType;
-  severity: SeverityLevel;
-}
-
-export interface BlinkAlertMessage {
-  type: 'BLINK_ALERT';
-  blinksPerMin: number;
-}
-
-export interface BreakReminderMessage {
-  type: 'BREAK_REMINDER';
-}
-
-export interface ClearInterventionMessage {
-  type: 'CLEAR_INTERVENTION';
-}
-
-export interface DemoReadyMessage {
-  type: 'DEMO_READY';
-}
-
-export type SyncMessage =
-  | PostureStatusMessage
-  | BlinkAlertMessage
-  | BreakReminderMessage
-  | ClearInterventionMessage
-  | DemoReadyMessage;
 </file>
 
 <file path="src/main.tsx">
@@ -2073,55 +2601,970 @@ export default defineConfig({
 })
 </file>
 
+<file path="src/lib/hooks/useVisionFeed.ts">
+import { useEffect, useRef, useState } from 'react';
+import {
+  initializeMediaPipe,
+  detectLandmarksForVideo,
+  drawLandmarksOnCanvas
+} from '../mediapipe/visionPipeline';
+import { computePostureMetrics, type PostureMetrics } from '../posture/postureMetrics';
+import { classifyPosture, type PostureClassification } from '../posture/postureClassifier';
+import { PostureMetricsSmoother } from '../posture/smoother';
+
+export interface UseVisionFeedOptions {
+  active?: boolean;
+  smoothingWeight?: number;
+}
+
+export interface UseVisionFeedResult {
+  videoRef: React.RefObject<HTMLVideoElement | null>;
+  canvasRef: React.RefObject<HTMLCanvasElement | null>;
+  cameraActive: boolean;
+  cameraError: string | null;
+  pipelineReady: boolean;
+  pipelineLoading: boolean;
+  pipelineError: string | null;
+  poseDetected: boolean;
+  measuredFps: number;
+  postureMetrics: PostureMetrics | null;
+  postureClassification: PostureClassification;
+}
+
+export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeedResult {
+  const { active = true, smoothingWeight = 0.35 } = options;
+
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const animFrameIdRef = useRef<number | null>(null);
+  const isProcessingRef = useRef<boolean>(false);
+  const lastTimestampMsRef = useRef<number>(0);
+  const lastProcessTimeRef = useRef<number>(0);
+  const fpsTimerRef = useRef<{ frames: number; lastTime: number }>({ frames: 0, lastTime: performance.now() });
+  const smootherRef = useRef<PostureMetricsSmoother>(new PostureMetricsSmoother(smoothingWeight));
+
+  const [cameraActive, setCameraActive] = useState<boolean>(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [pipelineReady, setPipelineReady] = useState<boolean>(false);
+  const [pipelineLoading, setPipelineLoading] = useState<boolean>(true);
+  const [pipelineError, setPipelineError] = useState<string | null>(null);
+
+  const [poseDetected, setPoseDetected] = useState<boolean>(false);
+  const [measuredFps, setMeasuredFps] = useState<number>(0);
+  const [postureMetrics, setPostureMetrics] = useState<PostureMetrics | null>(null);
+  const [postureClassification, setPostureClassification] = useState<PostureClassification>({
+    status: 'insufficient_data',
+    severity: 0,
+    deviationScore: 0,
+    reason: 'Initializing vision pipeline...'
+  });
+
+  // 1. Initialize MediaPipe Models
+  useEffect(() => {
+    let isCancelled = false;
+
+    async function loadModels() {
+      try {
+        setPipelineLoading(true);
+        setPipelineError(null);
+        await initializeMediaPipe();
+        if (!isCancelled) {
+          setPipelineReady(true);
+          setPipelineLoading(false);
+        }
+      } catch (err: unknown) {
+        if (!isCancelled) {
+          console.error('MediaPipe initialization error:', err);
+          const errorMsg = err instanceof Error ? err.message : 'Failed to initialize MediaPipe vision models';
+          setPipelineError(errorMsg);
+          setPipelineLoading(false);
+        }
+      }
+    }
+
+    loadModels();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
+  // 2. Start Live Webcam Feed
+  useEffect(() => {
+    if (!active) {
+      setCameraActive(false);
+      return;
+    }
+
+    let stream: MediaStream | null = null;
+    let isMounted = true;
+
+    async function startWebcam() {
+      try {
+        setCameraError(null);
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            facingMode: 'user'
+          },
+          audio: false
+        });
+
+        if (isMounted && videoRef.current) {
+          videoRef.current.srcObject = stream;
+          setCameraActive(true);
+        }
+      } catch (err: unknown) {
+        if (isMounted) {
+          console.error('Error accessing webcam:', err);
+          const errorMsg = err instanceof Error ? err.message : 'Camera permission denied or camera unavailable';
+          setCameraError(errorMsg);
+          setCameraActive(false);
+        }
+      }
+    }
+
+    startWebcam();
+
+    return () => {
+      isMounted = false;
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop());
+      }
+    };
+  }, [active]);
+
+  // 3. Robust Inference, Math & Render Loop with Background Tab Support
+  useEffect(() => {
+    if (!active || !pipelineReady || !cameraActive) {
+      return;
+    }
+
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video) return;
+
+    let isRunning = true;
+
+    // Core single-frame processor (can be called by either requestAnimationFrame or Worker ticker)
+    function executeInference() {
+      if (!isRunning) return;
+
+      const now = performance.now();
+      // Throttle slightly to max ~30-40 FPS to avoid redundant cycles
+      if (now - lastProcessTimeRef.current < 25) {
+        return;
+      }
+
+      if (!isProcessingRef.current && video && video.readyState >= 2 && video.videoWidth > 0) {
+        isProcessingRef.current = true;
+        lastProcessTimeRef.current = now;
+
+        const currentTimestampMs = performance.now();
+        const adjustedTimestampMs =
+          currentTimestampMs > lastTimestampMsRef.current ? currentTimestampMs : lastTimestampMsRef.current + 1;
+        lastTimestampMsRef.current = adjustedTimestampMs;
+
+        if (canvas && (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight)) {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+        }
+
+        const results = detectLandmarksForVideo(video, adjustedTimestampMs);
+
+        if (results) {
+          const poseLandmarks = results.poseResult?.landmarks?.[0];
+          const faceLandmarks = results.faceResult?.faceLandmarks?.[0];
+
+          // Only draw to canvas if canvas is present and document is not fully hidden (or for debugging)
+          if (canvas) {
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              drawLandmarksOnCanvas(ctx, canvas.width, canvas.height, poseLandmarks, faceLandmarks);
+            }
+          }
+
+          const isPosePresent = Boolean(poseLandmarks && poseLandmarks.length > 0);
+          setPoseDetected(isPosePresent);
+
+          if (isPosePresent && poseLandmarks) {
+            const rawMetrics = computePostureMetrics(poseLandmarks);
+            const smoothedMetrics = smootherRef.current.smooth(rawMetrics);
+            const classification = classifyPosture(smoothedMetrics);
+
+            setPostureMetrics(smoothedMetrics);
+            setPostureClassification(classification);
+          } else {
+            smootherRef.current.reset();
+            setPostureMetrics(null);
+            setPostureClassification({
+              status: 'insufficient_data',
+              severity: 0,
+              deviationScore: 0,
+              reason: 'No person detected in camera frame'
+            });
+          }
+        }
+
+        fpsTimerRef.current.frames += 1;
+        if (now - fpsTimerRef.current.lastTime >= 1000) {
+          setMeasuredFps(Math.round((fpsTimerRef.current.frames * 1000) / (now - fpsTimerRef.current.lastTime)));
+          fpsTimerRef.current.frames = 0;
+          fpsTimerRef.current.lastTime = now;
+        }
+
+        isProcessingRef.current = false;
+      }
+    }
+
+    // Animation frame pump for smooth 60fps rendering while tab is active
+    function onAnimationFrame() {
+      if (!isRunning) return;
+      executeInference();
+      animFrameIdRef.current = requestAnimationFrame(onAnimationFrame);
+    }
+
+    animFrameIdRef.current = requestAnimationFrame(onAnimationFrame);
+
+    // Background Tab Ticker:
+    // When the user switches to the secondary Demo tab, browsers throttle requestAnimationFrame to 0 or 1 FPS.
+    // A dedicated Web Worker timer continues firing every ~50ms uninterrupted in the background.
+    let backgroundWorker: Worker | null = null;
+    try {
+      const workerCode = `
+        let timer = null;
+        self.onmessage = function(e) {
+          if (e.data === 'start') {
+            if (!timer) {
+              timer = setInterval(function() {
+                self.postMessage('tick');
+              }, 50); // ~20 FPS in background
+            }
+          } else if (e.data === 'stop') {
+            if (timer) {
+              clearInterval(timer);
+              timer = null;
+            }
+          }
+        };
+      `;
+      const blob = new Blob([workerCode], { type: 'application/javascript' });
+      const workerUrl = URL.createObjectURL(blob);
+      backgroundWorker = new Worker(workerUrl);
+      backgroundWorker.onmessage = () => {
+        executeInference();
+      };
+      backgroundWorker.postMessage('start');
+      URL.revokeObjectURL(workerUrl);
+    } catch (err) {
+      console.warn('Could not start Web Worker background timer, falling back to interval:', err);
+      // Fallback interval if Worker creation fails
+      const fallbackInterval = setInterval(() => {
+        executeInference();
+      }, 80);
+      return () => {
+        isRunning = false;
+        clearInterval(fallbackInterval);
+        if (animFrameIdRef.current !== null) {
+          cancelAnimationFrame(animFrameIdRef.current);
+          animFrameIdRef.current = null;
+        }
+      };
+    }
+
+    return () => {
+      isRunning = false;
+      if (animFrameIdRef.current !== null) {
+        cancelAnimationFrame(animFrameIdRef.current);
+        animFrameIdRef.current = null;
+      }
+      if (backgroundWorker) {
+        backgroundWorker.postMessage('stop');
+        backgroundWorker.terminate();
+        backgroundWorker = null;
+      }
+      if (canvas) {
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+      }
+    };
+  }, [active, pipelineReady, cameraActive]);
+
+  return {
+    videoRef,
+    canvasRef,
+    cameraActive,
+    cameraError,
+    pipelineReady,
+    pipelineLoading,
+    pipelineError,
+    poseDetected,
+    measuredFps,
+    postureMetrics,
+    postureClassification
+  };
+}
+</file>
+
+<file path="src/lib/posture/postureClassifier.ts">
+import type { PostureMetrics } from './postureMetrics';
+
+/**
+ * Baseline posture thresholds for preliminary classification.
+ */
+export const POSTURE_THRESHOLDS = {
+  MIN_CONFIDENCE: 0.25,
+  
+  // Forward slouching thresholds
+  HEAD_FORWARD_MILD: 0.16,
+  HEAD_FORWARD_SIGNIFICANT: 0.26,
+  HEAD_FORWARD_SEVERE: 0.38,
+
+  HEAD_TORSO_ANGLE_MILD: 18.0,
+  HEAD_TORSO_ANGLE_SIGNIFICANT: 28.0,
+  HEAD_TORSO_ANGLE_SEVERE: 38.0,
+
+  // Lateral leaning thresholds
+  LATERAL_TILT_MILD: 6.0,
+  LATERAL_TILT_SIGNIFICANT: 12.0,
+  LATERAL_TILT_SEVERE: 18.0,
+
+  SHOULDER_TILT_MILD: 5.0,
+  SHOULDER_TILT_SIGNIFICANT: 9.0,
+  SHOULDER_TILT_SEVERE: 14.0
+} as const;
+
+export type PostureStatus = 'good' | 'slouching' | 'leaning' | 'insufficient_data';
+export type PostureSeverity = 0 | 1 | 2 | 3;
+
+export interface PostureClassification {
+  status: PostureStatus;
+  severity: PostureSeverity;
+  deviationScore: number; // 0.0-1.0, continuous
+  reason?: string;
+}
+
+/**
+ * Computes a continuous deviation score from 0.0 (reference posture) to 1.0 (maximum deviation).
+ * Interpolates each available metric linearly between its MILD and SEVERE thresholds,
+ * clamped to [0, 1], and returns the maximum contribution across all metrics.
+ */
+export function computeDeviationScore(metrics: PostureMetrics): number {
+  if (!metrics.isValid || metrics.confidence < POSTURE_THRESHOLDS.MIN_CONFIDENCE) {
+    return 0;
+  }
+
+  const scores: number[] = [];
+
+  const clamp01 = (val: number) => Math.max(0, Math.min(1, val));
+  const calcLinearRatio = (val: number, mild: number, severe: number) => {
+    if (val <= mild) return 0;
+    if (val >= severe) return 1;
+    return (val - mild) / (severe - mild);
+  };
+
+  // 1. Lateral Tilt contribution
+  if (metrics.lateralTiltDeg !== null) {
+    scores.push(
+      clamp01(
+        calcLinearRatio(
+          metrics.lateralTiltDeg,
+          POSTURE_THRESHOLDS.LATERAL_TILT_MILD,
+          POSTURE_THRESHOLDS.LATERAL_TILT_SEVERE
+        )
+      )
+    );
+  }
+
+  // 2. Shoulder Tilt contribution
+  if (metrics.shoulderTiltDeg !== null) {
+    scores.push(
+      clamp01(
+        calcLinearRatio(
+          metrics.shoulderTiltDeg,
+          POSTURE_THRESHOLDS.SHOULDER_TILT_MILD,
+          POSTURE_THRESHOLDS.SHOULDER_TILT_SEVERE
+        )
+      )
+    );
+  }
+
+  // 3. Head Forward Offset contribution
+  if (metrics.headForwardOffset !== null) {
+    scores.push(
+      clamp01(
+        calcLinearRatio(
+          metrics.headForwardOffset,
+          POSTURE_THRESHOLDS.HEAD_FORWARD_MILD,
+          POSTURE_THRESHOLDS.HEAD_FORWARD_SEVERE
+        )
+      )
+    );
+  }
+
+  // 4. Head-Torso Angle contribution
+  if (metrics.headTorsoAngleDeg !== null) {
+    scores.push(
+      clamp01(
+        calcLinearRatio(
+          metrics.headTorsoAngleDeg,
+          POSTURE_THRESHOLDS.HEAD_TORSO_ANGLE_MILD,
+          POSTURE_THRESHOLDS.HEAD_TORSO_ANGLE_SEVERE
+        )
+      )
+    );
+  }
+
+  if (scores.length === 0) {
+    return 0;
+  }
+
+  // Maximum contribution across available metrics ("worst metric wins")
+  const maxScore = Math.max(...scores);
+  return Number(maxScore.toFixed(3));
+}
+
+/**
+ * Classifies posture metrics into ergonomic states (good, slouching, leaning, or insufficient_data)
+ * and computes continuous deviationScore alongside discrete severity.
+ */
+export function classifyPosture(metrics: PostureMetrics): PostureClassification {
+  const deviationScore = computeDeviationScore(metrics);
+
+  // 1. Check data sufficiency & presence
+  if (!metrics.isValid || metrics.confidence < POSTURE_THRESHOLDS.MIN_CONFIDENCE) {
+    return {
+      status: 'insufficient_data',
+      severity: 0,
+      deviationScore: 0,
+      reason: 'Body landmarks not sufficiently visible or out of frame'
+    };
+  }
+
+  // Check if at least one primary posture angle is calculable
+  const hasLateral = metrics.lateralTiltDeg !== null;
+  const hasShoulder = metrics.shoulderTiltDeg !== null;
+  const hasHeadOffset = metrics.headForwardOffset !== null;
+  const hasHeadAngle = metrics.headTorsoAngleDeg !== null;
+
+  if (!hasLateral && !hasShoulder && !hasHeadOffset && !hasHeadAngle) {
+    return {
+      status: 'insufficient_data',
+      severity: 0,
+      deviationScore: 0,
+      reason: 'Key upper body landmarks missing'
+    };
+  }
+
+  // 2. Evaluate Lateral Leaning Severity
+  let leanSeverity: PostureSeverity = 0;
+  const lateralTilt = metrics.lateralTiltDeg ?? 0;
+  const shoulderTilt = metrics.shoulderTiltDeg ?? 0;
+
+  if (
+    (hasLateral && lateralTilt >= POSTURE_THRESHOLDS.LATERAL_TILT_SEVERE) ||
+    (hasShoulder && shoulderTilt >= POSTURE_THRESHOLDS.SHOULDER_TILT_SEVERE)
+  ) {
+    leanSeverity = 3;
+  } else if (
+    (hasLateral && lateralTilt >= POSTURE_THRESHOLDS.LATERAL_TILT_SIGNIFICANT) ||
+    (hasShoulder && shoulderTilt >= POSTURE_THRESHOLDS.SHOULDER_TILT_SIGNIFICANT)
+  ) {
+    leanSeverity = 2;
+  } else if (
+    (hasLateral && lateralTilt >= POSTURE_THRESHOLDS.LATERAL_TILT_MILD) ||
+    (hasShoulder && shoulderTilt >= POSTURE_THRESHOLDS.SHOULDER_TILT_MILD)
+  ) {
+    leanSeverity = 1;
+  }
+
+  // 3. Evaluate Forward Slouching Severity
+  let slouchSeverity: PostureSeverity = 0;
+  const headOffset = metrics.headForwardOffset ?? 0;
+  const headAngle = metrics.headTorsoAngleDeg ?? 0;
+
+  if (
+    (hasHeadOffset && headOffset >= POSTURE_THRESHOLDS.HEAD_FORWARD_SEVERE) ||
+    (hasHeadAngle && headAngle >= POSTURE_THRESHOLDS.HEAD_TORSO_ANGLE_SEVERE)
+  ) {
+    slouchSeverity = 3;
+  } else if (
+    (hasHeadOffset && headOffset >= POSTURE_THRESHOLDS.HEAD_FORWARD_SIGNIFICANT) ||
+    (hasHeadAngle && headAngle >= POSTURE_THRESHOLDS.HEAD_TORSO_ANGLE_SIGNIFICANT)
+  ) {
+    slouchSeverity = 2;
+  } else if (
+    (hasHeadOffset && headOffset >= POSTURE_THRESHOLDS.HEAD_FORWARD_MILD) ||
+    (hasHeadAngle && headAngle >= POSTURE_THRESHOLDS.HEAD_TORSO_ANGLE_MILD)
+  ) {
+    slouchSeverity = 1;
+  }
+
+  // 4. Primary Posture Determination
+  if (leanSeverity === 0 && slouchSeverity === 0) {
+    return {
+      status: 'good',
+      severity: 0,
+      deviationScore,
+      reason: 'Upright and well aligned'
+    };
+  }
+
+  if (leanSeverity >= slouchSeverity && leanSeverity > 0) {
+    const directionStr = metrics.leanDirection !== 'neutral' ? ` (${metrics.leanDirection})` : '';
+    const details = [
+      hasLateral ? `Torso tilt: ${metrics.lateralTiltDeg}°${directionStr}` : null,
+      hasShoulder ? `Shoulder tilt: ${metrics.shoulderTiltDeg}°` : null
+    ].filter(Boolean).join(', ');
+
+    return {
+      status: 'leaning',
+      severity: leanSeverity,
+      deviationScore,
+      reason: details || 'Lateral torso lean detected'
+    };
+  } else {
+    const details = [
+      hasHeadOffset ? `Head offset: ${metrics.headForwardOffset}` : null,
+      hasHeadAngle ? `Head-torso angle: ${metrics.headTorsoAngleDeg}°` : null
+    ].filter(Boolean).join(', ');
+
+    return {
+      status: 'slouching',
+      severity: slouchSeverity,
+      deviationScore,
+      reason: details || 'Forward head slouch detected'
+    };
+  }
+}
+</file>
+
+<file path="src/pages/Demo.tsx">
+import React, { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { send, onMessage } from '../lib/channel';
+import type { SyncMessage } from '../types/messages';
+import { Header } from '../components/Header';
+import { Hero } from '../components/Hero';
+import { Features } from '../components/Features';
+import { Discovery } from '../components/Discovery';
+import { Journal } from '../components/Journal';
+import { FinalCTA } from '../components/FinalCTA';
+import { Footer } from '../components/Footer';
+import { ShieldAlert } from 'lucide-react';
+
+// ---------------------------------------------------------------------------
+// Nonlinear progressive visual degradation mapping:
+// Base curve:
+// 0.0 - 0.25 (Low)     : 0 -> 10px blur, 1.0 -> 0.88 brightness, 1.0 -> 0.85 sat
+// 0.25 - 0.50 (Medium) : 10 -> 28px blur, 0.88 -> 0.70 brightness, 0.85 -> 0.60 sat
+// 0.50 - 0.75 (High)   : 28 -> 48px blur, 0.70 -> 0.48 brightness, 0.60 -> 0.35 sat
+// 0.75 - 1.0 (Critical): 48 -> 72px blur, 0.48 -> 0.30 brightness, 0.35 -> 0.20 sat
+// ---------------------------------------------------------------------------
+function calculateVisualParameters(effectiveIntensity: number) {
+  const i = Math.max(0, Math.min(1, effectiveIntensity));
+
+  let blurPx = 0;
+  let brightness = 1.0;
+  let saturate = 1.0;
+
+  if (i <= 0.01) {
+    blurPx = 0;
+    brightness = 1.0;
+    saturate = 1.0;
+  } else if (i <= 0.25) {
+    const t = i / 0.25;
+    blurPx = t * 10;
+    brightness = 1.0 - t * 0.12;
+    saturate = 1.0 - t * 0.15;
+  } else if (i <= 0.5) {
+    const t = (i - 0.25) / 0.25;
+    blurPx = 10 + t * 18;
+    brightness = 0.88 - t * 0.18;
+    saturate = 0.85 - t * 0.25;
+  } else if (i <= 0.75) {
+    const t = (i - 0.5) / 0.25;
+    blurPx = 28 + t * 20;
+    brightness = 0.70 - t * 0.22;
+    saturate = 0.60 - t * 0.25;
+  } else {
+    const t = (i - 0.75) / 0.25;
+    blurPx = 48 + t * 24;
+    brightness = 0.48 - t * 0.18;
+    saturate = 0.35 - t * 0.15;
+  }
+
+  const vignette = i * 0.75;
+  const filter = `blur(${blurPx.toFixed(1)}px) brightness(${brightness.toFixed(3)}) saturate(${saturate.toFixed(3)})`;
+
+  return { blurPx, brightness, saturate, vignette, filter };
+}
+
+// Recovery step per frame: ~60fps -> decays 1.0 to 0.0 in ~1.4 seconds
+const DECAY_RATE_PER_FRAME = 0.012;
+
+export const Demo: React.FC = () => {
+  // Check if posture setup has been completed in Dashboard
+  const [isSetupComplete, setIsSetupComplete] = useState<boolean>(() => {
+    return localStorage.getItem('postureInstructionsSeen') === 'true';
+  });
+
+  // Re-verify setup completion on focus or storage change
+  useEffect(() => {
+    const checkSetup = () => {
+      setIsSetupComplete(localStorage.getItem('postureInstructionsSeen') === 'true');
+    };
+    window.addEventListener('focus', checkSetup);
+    window.addEventListener('storage', checkSetup);
+    return () => {
+      window.removeEventListener('focus', checkSetup);
+      window.removeEventListener('storage', checkSetup);
+    };
+  }, []);
+
+  // Raw posture intensity and status from telemetry
+  const [baseIntensity, setBaseIntensity] = useState<number>(0);
+  const [isInterventionTriggered, setIsInterventionTriggered] = useState<boolean>(false);
+  const [isInsufficientData, setIsInsufficientData] = useState<boolean>(false);
+
+  // Time escalation tracking: timestamp when sustained deviation was triggered
+  const triggeredStartTimestampRef = useRef<number | null>(null);
+
+  // Effective rendered intensity (incorporating base telemetry + time escalation or recovery decay)
+  const renderedIntensityRef = useRef<number>(0);
+  const [displayIntensity, setDisplayIntensity] = useState<number>(0);
+
+  // rAF loop handle
+  const animationFrameRef = useRef<number | null>(null);
+
+  // ---------------------------------------------------------------------------
+  // Progressive Animation & Decay Engine
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    let isMounted = true;
+
+    const updateInterventionFrame = () => {
+      if (!isMounted) return;
+
+      const now = performance.now();
+
+      if (isInterventionTriggered && !isInsufficientData) {
+        // Compute time escalation:
+        // 0-2s: 0.0 bonus
+        // 2-5s: up to +0.15 bonus
+        // 5-8s: up to +0.30 bonus
+        // 8-12s: up to +0.45 bonus
+        // 12s+: up to +0.65 bonus
+        if (triggeredStartTimestampRef.current === null) {
+          triggeredStartTimestampRef.current = now;
+        }
+
+        const elapsedSec = (now - triggeredStartTimestampRef.current) / 1000;
+        let timeEscalationBonus = 0;
+        if (elapsedSec > 2) {
+          timeEscalationBonus = Math.min(0.65, (elapsedSec - 2) * 0.065);
+        }
+
+        const targetEffective = Math.min(1.0, baseIntensity + timeEscalationBonus);
+
+        // Smoothly approach target if higher
+        const current = renderedIntensityRef.current;
+        const next = current < targetEffective
+          ? Math.min(targetEffective, current + 0.02)
+          : Math.max(targetEffective, current - 0.015);
+
+        renderedIntensityRef.current = next;
+        setDisplayIntensity(next);
+      } else {
+        // Recovery / Good Posture / Insufficient Data: Reset time escalation timestamp and decay toward 0.0
+        triggeredStartTimestampRef.current = null;
+
+        const current = renderedIntensityRef.current;
+        if (current > 0.001) {
+          const next = Math.max(0, current - DECAY_RATE_PER_FRAME);
+          renderedIntensityRef.current = next;
+          setDisplayIntensity(next);
+        } else if (current !== 0) {
+          renderedIntensityRef.current = 0;
+          setDisplayIntensity(0);
+        }
+      }
+
+      animationFrameRef.current = requestAnimationFrame(updateInterventionFrame);
+    };
+
+    animationFrameRef.current = requestAnimationFrame(updateInterventionFrame);
+
+    return () => {
+      isMounted = false;
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, [isInterventionTriggered, baseIntensity, isInsufficientData]);
+
+  // ---------------------------------------------------------------------------
+  // BroadcastChannel listener & Demo Heartbeat
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    // Broadcast readiness immediately and periodically so Dashboard connection indicator stays live
+    send({ type: 'DEMO_READY' });
+    const readyHeartbeat = setInterval(() => {
+      send({ type: 'DEMO_READY' });
+    }, 10000);
+
+    const unsubscribe = onMessage((msg: SyncMessage) => {
+      if (msg.type === 'SETUP_COMPLETE') {
+        setIsSetupComplete(true);
+      } else if (msg.type === 'POSTURE_TELEMETRY') {
+        if (msg.status === 'insufficient_data') {
+          setIsInsufficientData(true);
+          setIsInterventionTriggered(false);
+          setBaseIntensity(0);
+        } else {
+          setIsInsufficientData(false);
+
+          if (msg.status === 'good' || msg.debouncerState === 'idle') {
+            setIsInterventionTriggered(false);
+            setBaseIntensity(0);
+          } else if (msg.debouncerState === 'triggered') {
+            setIsInterventionTriggered(true);
+            const incoming = Math.max(0.2, Math.min(1.0, msg.intensity));
+            setBaseIntensity(incoming);
+          } else if (msg.debouncerState === 'recovering') {
+            setIsInterventionTriggered(false);
+            setBaseIntensity(Math.max(0, Math.min(1.0, msg.intensity)));
+          }
+        }
+      } else if (msg.type === 'POSTURE_STATUS') {
+        // Direct trigger compatibility
+        setIsInsufficientData(false);
+        setIsInterventionTriggered(true);
+        const incoming = typeof msg.intensity === 'number' ? Math.max(0.25, Math.min(1.0, msg.intensity)) : 0.4;
+        setBaseIntensity(incoming);
+      } else if (msg.type === 'CLEAR_INTERVENTION') {
+        setIsInterventionTriggered(false);
+        setBaseIntensity(0);
+      } else if (msg.type === 'BLINK_ALERT') {
+        setIsInsufficientData(false);
+        setIsInterventionTriggered(true);
+        setBaseIntensity(0.4);
+      }
+    });
+
+    return () => {
+      clearInterval(readyHeartbeat);
+      unsubscribe();
+    };
+  }, []);
+
+  const visualParams = calculateVisualParameters(displayIntensity);
+
+  // prefers-reduced-motion: skip blur filter, use opacity degradation only
+  const prefersReducedMotion =
+    typeof window !== 'undefined' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // Content filter: apply blur only when not reduced-motion
+  const contentFilter = prefersReducedMotion
+    ? `opacity(${Math.max(0.3, 1 - displayIntensity * 0.7).toFixed(3)})`
+    : visualParams.filter;
+
+  // Scrolling is explicitly PRESERVED: pointer-events remain enabled, filter is visual only
+  const contentStyle: React.CSSProperties = {
+    filter: contentFilter,
+    transition: prefersReducedMotion ? 'opacity 0.4s ease-out' : 'filter 0.9s cubic-bezier(0.16, 1, 0.3, 1)',
+    position: 'relative',
+    minHeight: '100vh',
+    width: '100%',
+    overflowX: 'hidden'
+  };
+
+  // If setup has not been completed in Dashboard, display the gate screen
+  if (!isSetupComplete) {
+    return (
+      <div
+        style={{
+          minHeight: '100vh',
+          backgroundColor: 'var(--ink-bg)',
+          color: 'var(--ink-text)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '2rem',
+          fontFamily: 'var(--font-display)'
+        }}
+      >
+        <div
+          style={{
+            maxWidth: '520px',
+            width: '100%',
+            backgroundColor: 'var(--ink-panel)',
+            border: '1px solid var(--ink-border)',
+            borderRadius: '4px',
+            padding: '2.25rem 2rem',
+            textAlign: 'center',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center'
+          }}
+        >
+          <div
+            style={{
+              width: '50px',
+              height: '50px',
+              borderRadius: '50%',
+              backgroundColor: 'rgba(255, 107, 74, 0.15)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: 'var(--signal-alert)',
+              marginBottom: '1.25rem'
+            }}
+          >
+            <ShieldAlert size={26} />
+          </div>
+
+          <div
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.75rem',
+              letterSpacing: '0.08em',
+              color: 'var(--signal-alert)',
+              marginBottom: '0.5rem',
+              fontWeight: 600
+            }}
+          >
+            POSTURE SETUP REQUIRED
+          </div>
+
+          <h1
+            style={{
+              fontSize: '1.35rem',
+              fontWeight: 600,
+              lineHeight: 1.35,
+              color: 'var(--ink-text)',
+              margin: '0 0 1rem'
+            }}
+          >
+            Guided posture setup must be completed first.
+          </h1>
+
+          <p
+            style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: '0.9rem',
+              lineHeight: 1.6,
+              color: 'var(--ink-muted)',
+              margin: '0 0 2rem'
+            }}
+          >
+            Complete the guided posture setup in Dashboard before starting the intervention demo.
+          </p>
+
+          <Link
+            to="/dashboard"
+            className="btn btn-primary"
+            style={{
+              width: '100%',
+              padding: '0.75rem 1.25rem',
+              fontFamily: 'var(--font-display)',
+              fontSize: '0.9rem'
+            }}
+          >
+            Open Posture Dashboard
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="qp-page" style={{ position: 'relative' }}>
+      {/* Subtle vignette overlay — visual only, no text, pointer-events none */}
+      <div
+        className="intervention-overlay"
+        style={{ opacity: visualParams.vignette, pointerEvents: 'none' }}
+        aria-hidden="true"
+      />
+
+      {/* Main Content Area — scrolling remains 100% active, filter applies visually */}
+      <div className="demo-content-wrapper" style={contentStyle}>
+        <Header />
+        <Hero />
+        <Features />
+        <Discovery />
+        <Journal />
+        <FinalCTA />
+        <Footer />
+      </div>
+    </div>
+  );
+};
+</file>
+
 <file path="src/pages/Home.tsx">
 import React from 'react';
 import { Link } from 'react-router-dom';
 
 export const Home: React.FC = () => {
   return (
-    <div style={{ maxWidth: '1080px', margin: '2rem auto 4rem', padding: '0 1.5rem', fontFamily: 'var(--font-display)' }}>
-      {/* 1. HERO: Technical Overview & Posture Assessment Diagram */}
-      <section style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
-        gap: '2.5rem',
-        alignItems: 'center',
-        marginBottom: '4rem',
-        borderBottom: '1px solid var(--ink-border)',
-        paddingBottom: '3.5rem'
-      }}>
-        {/* Left Side: Copy & Route Actions */}
+    <div style={{ maxWidth: '1080px', margin: '2rem auto 4.5rem', padding: '0 1.5rem', fontFamily: 'var(--font-display)' }}>
+      {/* =========================================================================
+          SECTION 1 — HERO: What syncPosture is & Angular Deflection Concept
+          ========================================================================= */}
+      <section
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+          gap: '2.5rem',
+          alignItems: 'center',
+          marginBottom: '4rem',
+          borderBottom: '1px solid var(--ink-border)',
+          paddingBottom: '3.5rem'
+        }}
+      >
+        {/* Left Column: Mission, Value & Direct CTAs */}
         <div>
-          <div style={{
-            fontFamily: 'var(--font-mono)',
-            fontSize: '0.75rem',
-            letterSpacing: '0.1em',
-            color: 'var(--ink-muted)',
-            marginBottom: '0.75rem'
-          }}>
+          <div
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.75rem',
+              letterSpacing: '0.1em',
+              color: 'var(--ink-muted)',
+              marginBottom: '0.75rem'
+            }}
+          >
             ON-DEVICE ERGONOMIC MONITORING
           </div>
 
-          <h1 style={{
-            fontFamily: 'var(--font-display)',
-            fontSize: '2.35rem',
-            fontWeight: 600,
-            lineHeight: 1.15,
-            letterSpacing: '-0.02em',
-            color: 'var(--ink-text)',
-            margin: '0 0 1rem'
-          }}>
-            Real-time postural angle analysis on your machine.
+          <h1
+            style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: '2.35rem',
+              fontWeight: 600,
+              lineHeight: 1.15,
+              letterSpacing: '-0.02em',
+              color: 'var(--ink-text)',
+              margin: '0 0 1rem'
+            }}
+          >
+            Real-time posture intelligence, running entirely on your machine.
           </h1>
 
-          <p style={{
-            color: 'var(--ink-muted)',
-            fontSize: '1rem',
-            lineHeight: 1.6,
-            margin: '0 0 2rem',
-            maxWidth: '520px'
-          }}>
-            A zero-server ergonomics loop running on your hardware: Tab 1 runs continuous vision inference, emitting low-latency posture events over BroadcastChannel to Tab 2.
+          <p
+            style={{
+              color: 'var(--ink-muted)',
+              fontSize: '1rem',
+              lineHeight: 1.6,
+              margin: '0 0 2rem',
+              maxWidth: '520px'
+            }}
+          >
+            syncPosture uses on-device vision to detect sustained posture deviation and turn it into a real-time workspace intervention — without sending video to a server.
           </p>
 
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.85rem' }}>
@@ -2134,15 +3577,17 @@ export const Home: React.FC = () => {
           </div>
         </div>
 
-        {/* Right Side: Static SVG Technical Assessment Diagram */}
-        <div style={{
-          backgroundColor: 'var(--ink-panel)',
-          border: '1px solid var(--ink-border)',
-          borderRadius: '4px',
-          padding: '1.5rem',
-          display: 'flex',
-          flexDirection: 'column'
-        }}>
+        {/* Right Column: Angular Deflection SVG Instrument Schema */}
+        <div
+          style={{
+            backgroundColor: 'var(--ink-panel)',
+            border: '1px solid var(--ink-border)',
+            borderRadius: '4px',
+            padding: '1.5rem',
+            display: 'flex',
+            flexDirection: 'column'
+          }}
+        >
           <div className="panel-header" style={{ marginBottom: '1rem' }}>
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', letterSpacing: '0.06em', color: 'var(--ink-text)' }}>
               ANGULAR DEFLECTION SCHEMA
@@ -2160,7 +3605,6 @@ export const Home: React.FC = () => {
               style={{ width: '100%', height: 'auto', display: 'block' }}
             >
               <defs>
-                {/* Dash pattern for vertical reference plumb lines */}
                 <marker
                   id="arc-arrow"
                   markerWidth="6"
@@ -2175,7 +3619,6 @@ export const Home: React.FC = () => {
 
               {/* ---------------- LEFT FIGURE (Upright, Good Posture) ---------------- */}
               <g id="figure-upright">
-                {/* Status Label Above */}
                 <text
                   x="115"
                   y="28"
@@ -2210,7 +3653,6 @@ export const Home: React.FC = () => {
                 />
 
                 {/* Seated Figure Skeleton (Upright) */}
-                {/* Head (Profile Circle) */}
                 <circle
                   cx="115"
                   cy="70"
@@ -2219,10 +3661,8 @@ export const Home: React.FC = () => {
                   strokeWidth="1.75"
                   fill="none"
                 />
-                {/* Ear Point (Joint Dot) */}
                 <circle cx="115" cy="73" r="2.5" fill="var(--signal-good)" />
 
-                {/* Neck & Spine Path */}
                 <path
                   d="M 115 86 L 115 110 L 105 168 L 105 202 L 148 202"
                   stroke="var(--ink-text)"
@@ -2232,7 +3672,6 @@ export const Home: React.FC = () => {
                   strokeLinejoin="round"
                 />
 
-                {/* Shoulder & Arm (Relaxed) */}
                 <circle cx="115" cy="110" r="2.5" fill="var(--signal-good)" />
                 <path
                   d="M 115 110 L 126 150 L 146 150"
@@ -2243,11 +3682,8 @@ export const Home: React.FC = () => {
                   strokeLinejoin="round"
                 />
                 <circle cx="126" cy="150" r="2" fill="var(--ink-muted)" />
-
-                {/* Hip Joint Dot */}
                 <circle cx="105" cy="202" r="2.5" fill="var(--ink-muted)" />
 
-                {/* Angle Metric Below */}
                 <text
                   x="115"
                   y="235"
@@ -2285,7 +3721,6 @@ export const Home: React.FC = () => {
 
               {/* ---------------- RIGHT FIGURE (Forward Lean, Slouching) ---------------- */}
               <g id="figure-slouching">
-                {/* Status Label Above */}
                 <text
                   x="345"
                   y="28"
@@ -2299,7 +3734,6 @@ export const Home: React.FC = () => {
                   [ SLOUCHING · SEV 2 ]
                 </text>
 
-                {/* Chair Seat & Backrest Reference (hairline) */}
                 <path
                   d="M 280 160 L 280 205 L 375 205"
                   stroke="var(--ink-border)"
@@ -2307,7 +3741,6 @@ export const Home: React.FC = () => {
                   fill="none"
                 />
 
-                {/* Vertical Reference Plumb Line at Shoulder (dashed) */}
                 <line
                   x1="340"
                   y1="52"
@@ -2318,7 +3751,6 @@ export const Home: React.FC = () => {
                   strokeDasharray="3 3"
                 />
 
-                {/* Deflection Ray (dashed) following actual ear position to shoulder */}
                 <line
                   x1="375"
                   y1="68"
@@ -2329,7 +3761,6 @@ export const Home: React.FC = () => {
                   strokeDasharray="3 3"
                 />
 
-                {/* Deflection Arc between Vertical and Deflection Ray */}
                 <path
                   d="M 340 76 A 44 44 0 0 1 364 84"
                   stroke="var(--signal-alert)"
@@ -2338,7 +3769,6 @@ export const Home: React.FC = () => {
                   markerEnd="url(#arc-arrow)"
                 />
 
-                {/* Angular Degree Label at Arc */}
                 <text
                   x="376"
                   y="92"
@@ -2350,8 +3780,6 @@ export const Home: React.FC = () => {
                   34°
                 </text>
 
-                {/* Seated Figure Skeleton (Slouching / Forward Head) */}
-                {/* Head (Profile Circle - shifted forward and downward) */}
                 <circle
                   cx="375"
                   cy="68"
@@ -2360,10 +3788,8 @@ export const Home: React.FC = () => {
                   strokeWidth="1.75"
                   fill="none"
                 />
-                {/* Ear Point (Joint Dot) */}
                 <circle cx="375" cy="71" r="2.5" fill="var(--signal-alert)" />
 
-                {/* Neck & Kyphotic Spine Path */}
                 <path
                   d="M 368 83 Q 346 102 340 120 Q 320 156 332 202 L 375 202"
                   stroke="var(--ink-text)"
@@ -2373,10 +3799,7 @@ export const Home: React.FC = () => {
                   strokeLinejoin="round"
                 />
 
-                {/* Shoulder Joint Dot (protracted forward) */}
                 <circle cx="340" cy="120" r="2.5" fill="var(--signal-alert)" />
-
-                {/* Reaching Arm */}
                 <path
                   d="M 340 120 L 362 160 L 388 160"
                   stroke="var(--ink-text)"
@@ -2386,11 +3809,8 @@ export const Home: React.FC = () => {
                   strokeLinejoin="round"
                 />
                 <circle cx="362" cy="160" r="2" fill="var(--ink-muted)" />
-
-                {/* Hip Joint Dot */}
                 <circle cx="332" cy="202" r="2.5" fill="var(--ink-muted)" />
 
-                {/* Angle Metric Below */}
                 <text
                   x="345"
                   y="235"
@@ -2419,282 +3839,579 @@ export const Home: React.FC = () => {
         </div>
       </section>
 
-      {/* 2. ARCHITECTURE HEADER */}
-      <section style={{ marginBottom: '2rem' }}>
-        <div style={{
-          fontFamily: 'var(--font-mono)',
-          fontSize: '0.75rem',
-          letterSpacing: '0.1em',
-          color: 'var(--ink-muted)',
-          marginBottom: '0.5rem'
-        }}>
-          TWO TABS, ONE CHANNEL
-        </div>
-        <h2 style={{
-          fontFamily: 'var(--font-display)',
-          fontSize: '1.45rem',
-          fontWeight: 600,
-          lineHeight: 1.35,
-          color: 'var(--ink-text)',
-          margin: 0,
-          maxWidth: '720px'
-        }}>
-          A zero-server ergonomics loop running on your hardware: Tab 1 runs continuous vision inference, emitting low-latency posture events over BroadcastChannel to Tab 2.
-        </h2>
-      </section>
-
-      {/* 3. SVG TECHNICAL ARCHITECTURE DIAGRAM */}
-      <section style={{
-        marginBottom: '3rem',
-        border: '1px solid var(--ink-border)',
-        backgroundColor: 'var(--ink-panel)',
-        borderRadius: '4px',
-        padding: '1.75rem 1.25rem'
-      }}>
-        <div style={{ width: '100%', overflowX: 'auto' }}>
-          <svg
-            viewBox="0 0 800 120"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-            style={{ width: '100%', minWidth: '640px', height: 'auto', display: 'block' }}
+      {/* =========================================================================
+          SECTION 2 — SIGNAL PIPELINE: Engineering Signal Diagram
+          ========================================================================= */}
+      <section style={{ marginBottom: '4rem' }}>
+        <div style={{ marginBottom: '1.75rem' }}>
+          <div
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.75rem',
+              letterSpacing: '0.1em',
+              color: 'var(--ink-muted)',
+              marginBottom: '0.5rem'
+            }}
           >
-            <defs>
-              <marker
-                id="diagram-arrow"
-                markerWidth="8"
-                markerHeight="8"
-                refX="6"
-                refY="4"
-                orient="auto"
+            SIGNAL PIPELINE
+          </div>
+          <h2
+            style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: '1.45rem',
+              fontWeight: 600,
+              lineHeight: 1.35,
+              color: 'var(--ink-text)',
+              margin: 0
+            }}
+          >
+            From camera frame to ergonomic intervention.
+          </h2>
+        </div>
+
+        {/* 4-Stage Horizontal Instrument Flow */}
+        <div
+          style={{
+            backgroundColor: 'var(--ink-panel)',
+            border: '1px solid var(--ink-border)',
+            borderRadius: '4px',
+            overflow: 'hidden'
+          }}
+        >
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))'
+            }}
+          >
+            {[
+              {
+                step: '01',
+                phase: 'CAPTURE',
+                label: 'Webcam frame',
+                detail: 'Raw visual stream via getUserMedia'
+              },
+              {
+                step: '02',
+                phase: 'INTERPRET',
+                label: 'Pose + facial landmarks',
+                detail: 'Sub-35ms MediaPipe spatial inference'
+              },
+              {
+                step: '03',
+                phase: 'CLASSIFY',
+                label: 'Posture geometry + temporal smoothing',
+                detail: 'Multi-axis vectors with EMA filtering'
+              },
+              {
+                step: '04',
+                phase: 'INTERVENE',
+                label: 'Posture signal → workspace response',
+                detail: 'Progressive defocus on sustained deviation'
+              }
+            ].map((stage, idx) => (
+              <div
+                key={stage.step}
+                style={{
+                  padding: '1.5rem',
+                  position: 'relative',
+                  borderRight: idx < 3 ? '1px solid var(--ink-border)' : 'none',
+                  borderBottom: '1px solid var(--ink-border)'
+                }}
               >
-                <path d="M1 1L7 4L1 7" fill="none" stroke="#8CA6BC" strokeWidth="1.2" />
-              </marker>
-            </defs>
+                {/* Header: Stage index and phase */}
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'baseline',
+                    justifyContent: 'space-between',
+                    marginBottom: '1rem'
+                  }}
+                >
+                  <span
+                    style={{
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: '0.725rem',
+                      fontWeight: 500,
+                      color: 'var(--signal-good)',
+                      letterSpacing: '0.08em'
+                    }}
+                  >
+                    {stage.step} // {stage.phase}
+                  </span>
+                  {idx < 3 && (
+                    <span
+                      style={{
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: '0.75rem',
+                        color: 'var(--ink-muted)',
+                        opacity: 0.5
+                      }}
+                      aria-hidden="true"
+                    >
+                      →
+                    </span>
+                  )}
+                </div>
 
-            {/* Dashboard Tab Node */}
-            <rect
-              x="20"
-              y="20"
-              width="230"
-              height="80"
-              rx="2"
-              fill="#0F2138"
-              stroke="#2C4A66"
-              strokeWidth="1"
-            />
-            <text x="35" y="44" fill="#8CA6BC" fontSize="11" fontFamily="var(--font-mono)" letterSpacing="0.05em">
-              TAB 01 : DASHBOARD
-            </text>
-            <text x="35" y="66" fill="#E7EEF3" fontSize="13" fontFamily="var(--font-display)" fontWeight="600">
-              Webcam Feed + MediaPipe
-            </text>
-            <text x="35" y="84" fill="#8CA6BC" fontSize="11" fontFamily="var(--font-mono)">
-              Angles & Landmark Engine
-            </text>
+                <div
+                  style={{
+                    fontFamily: 'var(--font-display)',
+                    fontSize: '0.95rem',
+                    fontWeight: 600,
+                    color: 'var(--ink-text)',
+                    lineHeight: 1.4,
+                    marginBottom: '0.35rem'
+                  }}
+                >
+                  {stage.label}
+                </div>
 
-            {/* Interconnecting Arrow Line */}
-            <line
-              x1="250"
-              y1="60"
-              x2="540"
-              y2="60"
-              stroke="#2C4A66"
-              strokeWidth="1.5"
-              strokeDasharray="4 4"
-            />
-            <line
-              x1="340"
-              y1="60"
-              x2="450"
-              y2="60"
-              stroke="#8CA6BC"
-              strokeWidth="1"
-              markerEnd="url(#diagram-arrow)"
-            />
+                <div
+                  style={{
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: '0.75rem',
+                    color: 'var(--ink-muted)',
+                    lineHeight: 1.45
+                  }}
+                >
+                  {stage.detail}
+                </div>
+              </div>
+            ))}
+          </div>
 
-            {/* Channel Protocol Label */}
-            <rect
-              x="320"
-              y="32"
-              width="150"
-              height="22"
-              rx="2"
-              fill="#16304A"
-              stroke="#2C4A66"
-              strokeWidth="1"
-            />
-            <text
-              x="395"
-              y="47"
-              textAnchor="middle"
-              fill="#4FD8C4"
-              fontSize="10"
-              fontFamily="var(--font-mono)"
-              letterSpacing="0.08em"
+          {/* Technical bus annotation footer */}
+          <div
+            style={{
+              padding: '0.8rem 1.25rem',
+              backgroundColor: 'rgba(15, 33, 56, 0.65)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexWrap: 'wrap',
+              gap: '0.5rem'
+            }}
+          >
+            <span
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: '0.725rem',
+                letterSpacing: '0.08em',
+                color: 'var(--ink-muted)'
+              }}
             >
-              BroadcastChannel
-            </text>
-            <text
-              x="395"
-              y="80"
-              textAnchor="middle"
-              fill="#8CA6BC"
-              fontSize="10"
-              fontFamily="var(--font-mono)"
+              INTER-TAB SIGNAL BUS // BroadcastChannel // posturesync
+            </span>
+            <span
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: '0.725rem',
+                color: 'var(--signal-good)'
+              }}
             >
-              posturesync (same-origin)
-            </text>
-
-            {/* Demo Tab Node */}
-            <rect
-              x="550"
-              y="20"
-              width="230"
-              height="80"
-              rx="2"
-              fill="#0F2138"
-              stroke="#2C4A66"
-              strokeWidth="1"
-            />
-            <text x="565" y="44" fill="#8CA6BC" fontSize="11" fontFamily="var(--font-mono)" letterSpacing="0.05em">
-              TAB 02 : DEMO ROUTE
-            </text>
-            <text x="565" y="66" fill="#E7EEF3" fontSize="13" fontFamily="var(--font-display)" fontWeight="600">
-              Quiet Place Workspace
-            </text>
-            <text x="565" y="84" fill="#8CA6BC" fontSize="11" fontFamily="var(--font-mono)">
-              Degradation & Blur Reaction
-            </text>
-          </svg>
+              SAME-ORIGIN EVENT DISPATCH
+            </span>
+          </div>
         </div>
       </section>
 
-      {/* 4. TWO FLAT PANELS (Describing what each tab does) */}
-      <section style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
-        gap: '1.5rem',
-        marginBottom: '3.5rem'
-      }}>
-        {/* Panel A: Dashboard */}
-        <div className="glass-panel" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-          <div>
-            <div className="panel-header">
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', letterSpacing: '0.08em', color: 'var(--ink-muted)' }}>
-                INSTRUMENT PANEL
-              </span>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--ink-muted)' }}>
-                PORT : 01
-              </span>
-            </div>
-            <h3 style={{ fontSize: '1.15rem', fontWeight: 600, color: 'var(--ink-text)', margin: '0 0 0.5rem' }}>
-              Tab 1: Vision Dashboard
-            </h3>
-            <p style={{ color: 'var(--ink-muted)', fontSize: '0.875rem', lineHeight: 1.6, margin: '0 0 1.5rem' }}>
-              Captures live local video, runs real-time MediaPipe body and facial landmark models, computes angular cervical deflection, and broadcasts state payloads.
-            </p>
+      {/* =========================================================================
+          SECTION 3 — WHAT THE ENGINE OBSERVES: 2x2 Posture Geometry Matrix
+          ========================================================================= */}
+      <section style={{ marginBottom: '4rem' }}>
+        <div style={{ marginBottom: '1.75rem' }}>
+          <div
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.75rem',
+              letterSpacing: '0.1em',
+              color: 'var(--ink-muted)',
+              marginBottom: '0.5rem'
+            }}
+          >
+            POSTURE GEOMETRY
           </div>
-          <Link to="/dashboard" className="btn btn-primary" style={{ width: '100%' }}>
-            Open Dashboard Panel
-          </Link>
+          <h2
+            style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: '1.45rem',
+              fontWeight: 600,
+              lineHeight: 1.35,
+              color: 'var(--ink-text)',
+              margin: 0
+            }}
+          >
+            What the vision engine actually observes.
+          </h2>
         </div>
 
-        {/* Panel B: Demo Workspace */}
-        <div className="glass-panel" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-          <div>
-            <div className="panel-header">
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', letterSpacing: '0.08em', color: 'var(--ink-muted)' }}>
-                TARGET CLIENT
-              </span>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--ink-muted)' }}>
-                PORT : 02
-              </span>
+        {/* 2x2 Technical Matrix */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
+            gap: '1rem',
+            marginBottom: '1.25rem'
+          }}
+        >
+          {[
+            {
+              index: '01',
+              metric: 'HEAD ALIGNMENT',
+              symbol: 'headForwardOffset',
+              desc: 'Forward head displacement relative to the shoulder reference, normalized to shoulder width.'
+            },
+            {
+              index: '02',
+              metric: 'LATERAL LEAN',
+              symbol: 'lateralTiltDeg',
+              desc: 'Torso deviation from the vertical reference plumb line through the shoulder and hip midpoint.'
+            },
+            {
+              index: '03',
+              metric: 'SHOULDER BALANCE',
+              symbol: 'shoulderTiltDeg',
+              desc: 'Tilt of the shoulder line relative to horizontal, tracking asymmetric elevation or drooping.'
+            },
+            {
+              index: '04',
+              metric: 'HEAD–TORSO ALIGNMENT',
+              symbol: 'headTorsoAngleDeg',
+              desc: 'Angular relationship between the head vector and torso reference, isolating cervical spine flexion.'
+            }
+          ].map((item) => (
+            <div
+              key={item.index}
+              style={{
+                backgroundColor: 'var(--ink-panel)',
+                border: '1px solid var(--ink-border)',
+                borderRadius: '4px',
+                padding: '1.35rem 1.5rem',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between'
+              }}
+            >
+              <div>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'baseline',
+                    justifyContent: 'space-between',
+                    marginBottom: '0.75rem'
+                  }}
+                >
+                  <span
+                    style={{
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      color: 'var(--signal-good)',
+                      letterSpacing: '0.04em'
+                    }}
+                  >
+                    {item.index}
+                  </span>
+                  <span
+                    style={{
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: '0.7rem',
+                      color: 'var(--ink-muted)',
+                      letterSpacing: '0.04em'
+                    }}
+                  >
+                    {item.symbol}
+                  </span>
+                </div>
+
+                <div
+                  style={{
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: '0.85rem',
+                    fontWeight: 600,
+                    letterSpacing: '0.04em',
+                    color: 'var(--ink-text)',
+                    marginBottom: '0.5rem'
+                  }}
+                >
+                  {item.metric}
+                </div>
+
+                <p
+                  style={{
+                    fontFamily: 'var(--font-display)',
+                    fontSize: '0.85rem',
+                    color: 'var(--ink-muted)',
+                    lineHeight: 1.55,
+                    margin: 0
+                  }}
+                >
+                  {item.desc}
+                </p>
+              </div>
             </div>
-            <h3 style={{ fontSize: '1.15rem', fontWeight: 600, color: 'var(--ink-text)', margin: '0 0 0.5rem' }}>
-              Tab 2: Quiet Place Demo
-            </h3>
-            <p style={{ color: 'var(--ink-muted)', fontSize: '0.875rem', lineHeight: 1.6, margin: '0 0 1.5rem' }}>
-              Simulates your everyday workspace. Subscribes to BroadcastChannel telemetry and gently blurs readability when poor posture persists.
-            </p>
-          </div>
-          <Link to="/demo" className="btn btn-secondary" style={{ width: '100%' }}>
-            Open Demo Environment
-          </Link>
+          ))}
+        </div>
+
+        {/* Small Technical Note */}
+        <div
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: '0.75rem',
+            color: 'var(--ink-muted)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            padding: '0.5rem 0'
+          }}
+        >
+          <span style={{ color: 'var(--signal-good)' }}>// NOTE:</span>
+          <span>The system smooths frame-level measurements and waits for sustained deviation before triggering an intervention.</span>
         </div>
       </section>
 
-      {/* 5. SPECIFICATION LIST (Hairline-rule separated rows) */}
-      <section style={{
-        borderTop: '1px solid var(--ink-border)',
-        paddingTop: '1.5rem'
-      }}>
-        <div style={{
-          fontFamily: 'var(--font-mono)',
-          fontSize: '0.75rem',
-          letterSpacing: '0.1em',
-          color: 'var(--ink-muted)',
-          marginBottom: '1rem'
-        }}>
-          SYSTEM SPECIFICATIONS
+      {/* =========================================================================
+          SECTION 4 — LOCAL BY DESIGN: Architectural Privacy & Boundary Table
+          ========================================================================= */}
+      <section
+        style={{
+          marginBottom: '4rem',
+          borderTop: '1px solid var(--ink-border)',
+          paddingTop: '2.5rem'
+        }}
+      >
+        <div style={{ marginBottom: '1.75rem' }}>
+          <div
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.75rem',
+              letterSpacing: '0.1em',
+              color: 'var(--ink-muted)',
+              marginBottom: '0.5rem'
+            }}
+          >
+            LOCAL BY DESIGN
+          </div>
+          <h2
+            style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: '1.45rem',
+              fontWeight: 600,
+              lineHeight: 1.35,
+              color: 'var(--ink-text)',
+              margin: 0
+            }}
+          >
+            Privacy is part of the architecture.
+          </h2>
         </div>
 
+        {/* Technical Specification Table */}
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           {[
             {
-              label: 'PROCESSING ARCHITECTURE',
-              value: '100% on-device inference via WebAssembly & WebGL. Zero network requests.'
+              label: 'COMPUTATION',
+              value: 'On-device vision inference',
+              note: 'Posture inference runs locally after the required vision assets are available to the browser.'
             },
             {
-              label: 'IMAGE PERSISTENCE',
-              value: 'Zero video or image frames are ever recorded, written to disk, or transmitted.'
+              label: 'VIDEO',
+              value: 'Frames are not intentionally recorded or transmitted by the application',
+              note: 'Camera memory buffers remain strictly isolated within browser WebGL and CPU contexts.'
             },
             {
-              label: 'INTER-PROCESS BUS',
-              value: 'Native browser BroadcastChannel API — zero WebSockets, servers, or cloud dependencies.'
+              label: 'SIGNAL BUS',
+              value: 'Native BroadcastChannel for same-origin tab communication',
+              note: 'Zero telemetry leaks outside the local browser instance; no external relay required.'
             },
             {
-              label: 'EXTENSIONS REQUIRED',
-              value: 'None. Operates purely inside modern Chromium, Gecko, or WebKit browser runtimes.'
-            },
-            {
-              label: 'LATENCY PROFILE',
-              value: 'Sub-35ms frame-to-classification turnaround with exponential moving average smoothing.'
+              label: 'INFRASTRUCTURE',
+              value: 'No application backend or WebSocket dependency',
+              note: 'Operates entirely client-side without authentication servers, databases, or remote workers.'
             }
-          ].map((row, idx) => (
+          ].map((row) => (
             <div
-              key={idx}
+              key={row.label}
               style={{
                 display: 'grid',
                 gridTemplateColumns: 'minmax(180px, 240px) 1fr',
-                padding: '0.85rem 0',
+                padding: '1.1rem 0',
                 borderBottom: '1px solid var(--ink-border)',
                 alignItems: 'baseline',
-                gap: '1rem'
+                gap: '1.5rem'
               }}
             >
-              <span style={{
-                fontFamily: 'var(--font-mono)',
-                fontSize: '0.75rem',
-                color: 'var(--ink-muted)',
-                letterSpacing: '0.04em'
-              }}>
+              <span
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '0.75rem',
+                  color: 'var(--ink-muted)',
+                  letterSpacing: '0.06em'
+                }}
+              >
                 {row.label}
               </span>
-              <span style={{
-                fontFamily: 'var(--font-display)',
-                fontSize: '0.875rem',
-                color: 'var(--ink-text)',
-                lineHeight: 1.5
-              }}>
-                {row.value}
-              </span>
+              <div>
+                <div
+                  style={{
+                    fontFamily: 'var(--font-display)',
+                    fontSize: '0.925rem',
+                    fontWeight: 500,
+                    color: 'var(--ink-text)',
+                    lineHeight: 1.45,
+                    marginBottom: '0.2rem'
+                  }}
+                >
+                  {row.value}
+                </div>
+                <div
+                  style={{
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: '0.75rem',
+                    color: 'var(--ink-muted)',
+                    lineHeight: 1.45
+                  }}
+                >
+                  {row.note}
+                </div>
+              </div>
             </div>
           ))}
+        </div>
+      </section>
+
+      {/* =========================================================================
+          SECTION 5 — FINAL ACTION STRIP: Action Execution & Status
+          ========================================================================= */}
+      <section
+        style={{
+          backgroundColor: 'var(--ink-panel)',
+          border: '1px solid var(--ink-border)',
+          borderRadius: '4px',
+          padding: '2rem 2.25rem'
+        }}
+      >
+        <div style={{ maxWidth: '640px', marginBottom: '1.75rem' }}>
+          <div
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.75rem',
+              letterSpacing: '0.1em',
+              color: 'var(--ink-muted)',
+              marginBottom: '0.5rem'
+            }}
+          >
+            READY TO RUN
+          </div>
+          <h2
+            style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: '1.45rem',
+              fontWeight: 600,
+              lineHeight: 1.3,
+              color: 'var(--ink-text)',
+              margin: '0 0 0.65rem'
+            }}
+          >
+            See the signal become an intervention.
+          </h2>
+          <p
+            style={{
+              color: 'var(--ink-muted)',
+              fontSize: '0.9rem',
+              lineHeight: 1.55,
+              margin: 0
+            }}
+          >
+            Open the dashboard to inspect live posture telemetry, or launch the demo workspace to see how sustained deviation affects the target interface.
+          </p>
+        </div>
+
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            gap: '0.85rem',
+            marginBottom: '1.5rem'
+          }}
+        >
+          <Link to="/dashboard" className="btn btn-primary">
+            Open Dashboard
+          </Link>
+          <Link to="/demo" className="btn btn-secondary">
+            Open Demo
+          </Link>
+        </div>
+
+        <div
+          style={{
+            borderTop: '1px solid var(--ink-border)',
+            paddingTop: '0.85rem',
+            fontFamily: 'var(--font-mono)',
+            fontSize: '0.7rem',
+            letterSpacing: '0.08em',
+            color: 'var(--ink-muted)'
+          }}
+        >
+          LOCAL INFERENCE / REAL-TIME TELEMETRY / CLIENT-SIDE PROCESSING
         </div>
       </section>
     </div>
   );
 };
+</file>
+
+<file path="src/types/messages.ts">
+export type PostureStatusType = 'good' | 'slouching' | 'leaning';
+export type SeverityLevel = 0 | 1 | 2 | 3;
+
+export interface PostureStatusMessage {
+  type: 'POSTURE_STATUS';
+  status: PostureStatusType;
+  severity: SeverityLevel;
+  intensity: number; // 0.0-1.0, continuous deviation score
+}
+
+export interface BlinkAlertMessage {
+  type: 'BLINK_ALERT';
+  blinksPerMin: number;
+}
+
+export interface BreakReminderMessage {
+  type: 'BREAK_REMINDER';
+}
+
+export interface ClearInterventionMessage {
+  type: 'CLEAR_INTERVENTION';
+}
+
+export interface DemoReadyMessage {
+  type: 'DEMO_READY';
+}
+
+export interface SetupCompleteMessage {
+  type: 'SETUP_COMPLETE';
+}
+
+export interface PostureTelemetryMessage {
+  type: 'POSTURE_TELEMETRY';
+  status: 'good' | 'slouching' | 'leaning' | 'insufficient_data';
+  severity: 0 | 1 | 2 | 3;
+  intensity: number;
+  debouncerState: 'idle' | 'accumulating' | 'triggered' | 'recovering';
+  timestamp: number;
+}
+
+export type SyncMessage =
+  | PostureStatusMessage
+  | BlinkAlertMessage
+  | BreakReminderMessage
+  | ClearInterventionMessage
+  | DemoReadyMessage
+  | SetupCompleteMessage
+  | PostureTelemetryMessage;
 </file>
 
 <file path="src/App.tsx">
@@ -3757,24 +5474,383 @@ a {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* Suppress vignette pulse and status dot pulse */
+  .intervention-overlay {
+    animation: none !important;
+  }
+  .nav-status-dot,
+  .status-dot-pulse {
+    animation: none !important;
   }
 }
+
+/* ==========================================================
+   STATUS ROW — 4-state monitoring strip (Dashboard)
+   ========================================================== */
+
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+}
+
+.status-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+.status-dot--good {
+  background-color: var(--signal-good);
+}
+
+.status-dot--alert {
+  background-color: var(--signal-alert);
+}
+
+.status-dot--muted {
+  background-color: var(--ink-border);
+}
+
+.status-dot--pulse {
+  animation: pulse-status 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.status-label--good {
+  color: var(--signal-good);
+}
+
+.status-label--alert {
+  color: var(--signal-alert);
+}
+
+.status-label--muted {
+  color: var(--ink-muted);
+}
+
+.status-label--text {
+  color: var(--ink-text);
+}
+
+/* ==========================================================
+   METRIC CALLOUT — Large active step value display
+   ========================================================== */
+
+.metric-callout {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.metric-callout__label {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+}
+
+.metric-callout__value {
+  font-family: var(--font-mono);
+  font-size: 2rem;
+  font-weight: 600;
+  line-height: 1;
+  transition: color 0.2s ease;
+}
+
+.metric-callout__value--good {
+  color: var(--signal-good);
+}
+
+.metric-callout__value--alert {
+  color: var(--signal-alert);
+}
+
+.metric-callout__value--muted {
+  color: var(--ink-muted);
+}
+
+.metric-callout__limit {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--ink-muted);
+  margin-top: 0.15rem;
+}
+
+/* ==========================================================
+   SETUP STEP PROGRESS RAIL
+   ========================================================== */
+
+.setup-progress-rail {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.setup-progress-rail__segment {
+  height: 3px;
+  border-radius: 1px;
+  transition: background-color 0.3s ease;
+}
+
+.setup-progress-rail__segment--done {
+  background-color: var(--signal-good);
+}
+
+.setup-progress-rail__segment--active {
+  background-color: var(--ink-text);
+}
+
+.setup-progress-rail__segment--pending {
+  background-color: var(--ink-border);
+}
+
+/* Step success flash */
+.step-accepted-flash {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--signal-good);
+  letter-spacing: 0.04em;
+  animation: flash-in 0.25s ease forwards;
+}
+
+@keyframes flash-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ==========================================================
+   DEMO — STATUS STRIP & RECOVERY BANNER
+   ========================================================== */
+
+/* Persistent monitoring status strip — fixed bottom-left, outside blur layer */
+.demo-status-strip {
+  position: fixed;
+  bottom: 20px;
+  left: 20px;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  pointer-events: none;
+}
+
+.demo-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background-color: rgba(23, 59, 53, 0.88);
+  border: 1px solid rgba(23, 59, 53, 0.25);
+  border-radius: 6px;
+  padding: 6px 12px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  font-family: var(--font-mono, monospace);
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  color: #DCEBE4;
+  transition: opacity 0.4s ease;
+}
+
+.demo-status-pill--good {
+  border-color: rgba(79, 216, 196, 0.3);
+}
+
+.demo-status-pill--alert {
+  border-color: rgba(233, 111, 103, 0.4);
+  color: #F4C5C1;
+}
+
+.demo-status-pip {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.demo-status-pip--good {
+  background-color: #4FD8C4;
+}
+
+.demo-status-pip--alert {
+  background-color: #E96F67;
+}
+
+.demo-status-pip--muted {
+  background-color: rgba(120, 149, 139, 0.6);
+}
+
+/* Recovery / Restored banner — centered, above content */
+.demo-recovery-banner {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 80;
+  background-color: rgba(23, 59, 53, 0.9);
+  border: 1px solid rgba(79, 216, 196, 0.4);
+  border-radius: 8px;
+  padding: 8px 20px;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  color: #4FD8C4;
+  pointer-events: none;
+  animation: banner-appear 0.3s ease forwards;
+  white-space: nowrap;
+}
+
+@keyframes banner-appear {
+  from { opacity: 0; transform: translateX(-50%) translateY(-6px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* ==========================================================
+   DASHBOARD RESPONSIVE LAYOUT
+   ========================================================== */
+
+/* 2-column layout container — switches to 1-col at 1024px */
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 1.5rem;
+}
+
+@media (max-width: 1060px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Dashboard outer wrapper with responsive padding */
+.dashboard-wrapper {
+  max-width: 1240px;
+  margin: 1.75rem auto 4rem;
+  padding: 0 1.5rem;
+  font-family: var(--font-display);
+}
+
+@media (max-width: 640px) {
+  .dashboard-wrapper {
+    padding: 0 1rem;
+    margin-top: 1.25rem;
+  }
+}
+
+/* Dashboard header bar — wraps gracefully on small screens */
+.dashboard-header-bar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+  gap: 1rem;
+  border-bottom: 1px solid var(--ink-border);
+  padding-bottom: 1rem;
+}
+
+@media (max-width: 640px) {
+  .dashboard-header-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.85rem;
+  }
+}
+
+/* Setup wizard responsive font scaling */
+@media (max-width: 540px) {
+  .setup-step-title {
+    font-size: 1.15rem !important;
+  }
+  .metric-callout__value {
+    font-size: 1.5rem;
+  }
+}
+
+/* Two-tab architecture diagram shown in step 5 completion */
+.two-tab-diagram {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 1rem;
+  background: var(--ink-bg);
+  border: 1px solid var(--ink-border);
+  border-radius: 4px;
+}
+
+.tab-box {
+  padding: 0.65rem 0.85rem;
+  border: 1px solid var(--ink-border);
+  border-radius: 3px;
+  text-align: center;
+}
+
+.tab-box--active {
+  border-color: var(--signal-good);
+  background: rgba(79, 216, 196, 0.06);
+}
+
+.tab-box__label {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.06em;
+  color: var(--ink-muted);
+  margin-bottom: 0.2rem;
+}
+
+.tab-box__name {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ink-text);
+}
+
+.tab-box__status {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: var(--signal-good);
+  margin-top: 0.2rem;
+}
+
+.tab-arrow {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--ink-muted);
+  text-align: center;
+}
+
 
 /* ==========================================================
    DEGRADATION & BLUR INTERVENTION STYLING
    ========================================================== */
 
 .demo-content-wrapper {
-  transition: filter 0.6s cubic-bezier(0.16, 1, 0.3, 1), transform 0.6s ease;
+  /* filter is set via inline style from JS; this transition animates all changes smoothly */
+  transition: filter 0.9s cubic-bezier(0.16, 1, 0.3, 1);
   position: relative;
   flex: 1;
+  will-change: filter;
 }
 
-.demo-content-wrapper.blurred {
-  filter: blur(14px) brightness(0.7) saturate(0.8);
-  pointer-events: none;
-  user-select: none;
-}
+/* pointer-events/user-select are toggled inline when intensity > 0 */
 
 .intervention-overlay {
   position: fixed;
@@ -3785,16 +5861,18 @@ a {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: radial-gradient(circle, transparent 40%, rgba(233, 111, 103, 0.35) 100%);
+  /* base vignette gradient; opacity driven by inline style */
+  background: radial-gradient(circle, transparent 35%, rgba(233, 111, 103, 0.6) 100%);
   animation: pulse-vignette 2.4s infinite alternate ease-in-out;
+  transition: opacity 0.9s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @keyframes pulse-vignette {
   0% {
-    background: radial-gradient(circle, transparent 45%, rgba(233, 111, 103, 0.2) 100%);
+    background: radial-gradient(circle, transparent 45%, rgba(233, 111, 103, 0.5) 100%);
   }
   100% {
-    background: radial-gradient(circle, transparent 35%, rgba(233, 111, 103, 0.45) 100%);
+    background: radial-gradient(circle, transparent 32%, rgba(233, 111, 103, 0.75) 100%);
   }
 }
 
@@ -4000,10 +6078,13 @@ a {
 </file>
 
 <file path="src/pages/Dashboard.tsx">
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { send, onMessage } from '../lib/channel';
 import type { SyncMessage } from '../types/messages';
 import { useVisionFeed } from '../lib/hooks/useVisionFeed';
+import { PostureDebouncer } from '../lib/posture/temporalDebounce';
+import type { DebouncerState } from '../lib/posture/temporalDebounce';
+import { PostureInstructions } from '../components/PostureInstructions';
 import { ShieldAlert } from 'lucide-react';
 
 export const Dashboard: React.FC = () => {
@@ -4021,33 +6102,239 @@ export const Dashboard: React.FC = () => {
     postureClassification
   } = useVisionFeed({ active: true });
 
-  // Broadcast Log State
+  // Posture Instructions Orientation state
+  const [hasSeenInstructions, setHasSeenInstructions] = useState<boolean>(() => {
+    return localStorage.getItem('postureInstructionsSeen') === 'true';
+  });
+
+  // Secondary tab launch error state
+  const [popupBlocked, setPopupBlocked] = useState<boolean>(false);
+
+  // Target window reference name for secondary tab reuse
+  const DEMO_WINDOW_NAME = 'syncPostureDemo';
+
+  const launchDemoTab = () => {
+    try {
+      const demoUrl = `${window.location.origin}/demo`;
+      const secondaryTab = window.open(demoUrl, DEMO_WINDOW_NAME);
+      if (!secondaryTab || secondaryTab.closed || typeof secondaryTab.closed === 'undefined') {
+        setPopupBlocked(true);
+      } else {
+        setPopupBlocked(false);
+        secondaryTab.focus();
+      }
+    } catch (err) {
+      console.error('Failed to open secondary tab:', err);
+      setPopupBlocked(true);
+    }
+  };
+
+  const handleCompleteInstructions = () => {
+    localStorage.setItem('postureInstructionsSeen', 'true');
+    setHasSeenInstructions(true);
+    // Emit SETUP_COMPLETE over BroadcastChannel so secondary tabs know setup is valid
+    send({ type: 'SETUP_COMPLETE' });
+    // Keep Dashboard alive! Open secondary tab without unmounting Dashboard
+    launchDemoTab();
+  };
+
+  const handleDismissInstructions = () => {
+    localStorage.setItem('postureInstructionsSeen', 'true');
+    setHasSeenInstructions(true);
+  };
+
+  const handleRestartSetup = () => {
+    localStorage.removeItem('postureInstructionsSeen');
+    setHasSeenInstructions(false);
+  };
+
+  // ---------- Demo Tab Connection State ----------
+  const [demoConnected, setDemoConnected] = useState<boolean>(false);
+  const demoHeartbeatTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ---------- Broadcast Log State ----------
   const [lastSentMessage, setLastSentMessage] = useState<string>('None yet');
   const [receivedMessages, setReceivedMessages] = useState<string[]>([]);
+  const lastLogSampleTimeRef = useRef<number>(0);
+  const lastTelemetryBroadcastTimeRef = useRef<number>(0);
 
-  // Listen for cross-tab messages (e.g., DEMO_READY)
+  // ---------- Auto-broadcast via PostureDebouncer ----------
+  const [smoothedScore, setSmoothedScore] = useState<number>(0);
+  const [debouncerState, setDebouncerState] = useState<DebouncerState>('idle');
+
+  // Stable ref so the debouncer instance survives re-renders
+  const debouncerRef = useRef<PostureDebouncer | null>(null);
+
+  if (!debouncerRef.current) {
+    debouncerRef.current = new PostureDebouncer({
+      onTriggered: (score) => {
+        void score;
+      },
+      onCleared: () => {},
+      onScoreUpdate: (score) => setSmoothedScore(score),
+    });
+  }
+
+  // Reset debouncer whenever camera goes offline
+  useEffect(() => {
+    if (!cameraActive) {
+      debouncerRef.current?.reset();
+    }
+  }, [cameraActive]);
+
+  // Feed postureClassification into the debouncer and broadcast throttled continuous telemetry
+  useEffect(() => {
+    const debouncer = debouncerRef.current;
+    if (!debouncer) return;
+
+    // 1. Determine raw score: if insufficient_data or no person, score is 0
+    const isInsufficient =
+      !postureMetrics?.isValid ||
+      postureClassification.status === 'insufficient_data';
+    const rawScore = isInsufficient ? 0 : (postureClassification.deviationScore ?? 0);
+
+    // 2. Capture debouncer state transitions
+    const prevState = debouncer.currentState;
+    debouncer.update(rawScore);
+    const nextState = debouncer.currentState;
+
+    if (prevState !== nextState) {
+      setDebouncerState(nextState);
+    }
+
+    // 3. Compute telemetry properties
+    // When posture is good or insufficient data, intensity is 0
+    const rawSmoothed = debouncer.currentSmoothedScore;
+    let clampedIntensity = Math.max(0, Math.min(1, rawSmoothed));
+
+    const status = isInsufficient ? 'insufficient_data' : postureClassification.status;
+    if (status === 'good' || status === 'insufficient_data') {
+      clampedIntensity = 0;
+    }
+
+    const severity = isInsufficient || status === 'good' ? 0 : postureClassification.severity;
+    const now = Date.now();
+
+    // 4. Immediate sends on critical state transitions
+    const isStateTransition = prevState !== nextState;
+
+    if (prevState !== 'triggered' && nextState === 'triggered') {
+      // Sustained bad posture triggered
+      const triggerStatus = status === 'good' || status === 'insufficient_data' ? 'slouching' : status;
+      send({
+        type: 'POSTURE_STATUS',
+        status: triggerStatus,
+        severity: severity > 0 ? severity : 1,
+        intensity: clampedIntensity > 0 ? clampedIntensity : 0.35,
+      });
+    } else if (prevState === 'recovering' && nextState === 'idle') {
+      // Clear intervention
+      send({ type: 'CLEAR_INTERVENTION' });
+    }
+
+    // 5. Throttled continuous telemetry broadcast (approx ~10Hz / 100ms interval or immediate on state change)
+    const timeSinceLastBroadcast = now - lastTelemetryBroadcastTimeRef.current;
+    if (isStateTransition || timeSinceLastBroadcast >= 95) {
+      lastTelemetryBroadcastTimeRef.current = now;
+
+      send({
+        type: 'POSTURE_TELEMETRY',
+        status,
+        severity,
+        intensity: Number(clampedIntensity.toFixed(3)),
+        debouncerState: nextState,
+        timestamp: now
+      });
+
+      // 6. Log sampling: log immediately on state change, or sample approx once per second
+      const timeSinceLastLog = now - lastLogSampleTimeRef.current;
+      if (isStateTransition || timeSinceLastLog >= 1000) {
+        lastLogSampleTimeRef.current = now;
+        const logEntry = `POSTURE_TELEMETRY status=${status} severity=${severity} intensity=${clampedIntensity.toFixed(2)} state=${nextState}`;
+        setLastSentMessage(`${logEntry} at ${new Date(now).toLocaleTimeString()}`);
+        setReceivedMessages((prev) => [
+          `[${new Date(now).toLocaleTimeString()}] Broadcast: ${logEntry}`,
+          ...prev.slice(0, 9)
+        ]);
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [postureClassification, postureMetrics]);
+
+  // ---------- Channel Activity & Demo Heartbeat Listener ----------
   useEffect(() => {
     const unsubscribe = onMessage((msg: SyncMessage) => {
       const timestamp = new Date().toLocaleTimeString();
-      setReceivedMessages((prev) => [
-        `[${timestamp}] Received: ${msg.type} ${JSON.stringify(msg)}`,
-        ...prev.slice(0, 9)
-      ]);
+
+      if (msg.type === 'DEMO_READY') {
+        setDemoConnected(true);
+        // Reset timeout for demo presence
+        if (demoHeartbeatTimeoutRef.current) {
+          clearTimeout(demoHeartbeatTimeoutRef.current);
+        }
+        demoHeartbeatTimeoutRef.current = setTimeout(() => {
+          setDemoConnected(false);
+        }, 15000);
+
+        setReceivedMessages((prev) => [
+          `[${timestamp}] Received: DEMO_READY (Demo Tab Connected)`,
+          ...prev.slice(0, 9)
+        ]);
+
+        // Synchronize initial state to newly connected Demo
+        const debouncer = debouncerRef.current;
+        const currentDebouncerState = debouncer?.currentState ?? 'idle';
+        const isInsufficient =
+          !postureMetrics?.isValid ||
+          postureClassification.status === 'insufficient_data';
+        const currentStatus = isInsufficient ? 'insufficient_data' : postureClassification.status;
+        const currentIntensity =
+          currentStatus === 'good' || currentStatus === 'insufficient_data'
+            ? 0
+            : Math.max(0, Math.min(1, debouncer?.currentSmoothedScore ?? 0));
+
+        send({
+          type: 'POSTURE_TELEMETRY',
+          status: currentStatus,
+          severity: currentStatus === 'good' || isInsufficient ? 0 : postureClassification.severity,
+          intensity: Number(currentIntensity.toFixed(3)),
+          debouncerState: currentDebouncerState,
+          timestamp: Date.now()
+        });
+
+        if (currentDebouncerState === 'triggered' && currentStatus !== 'good' && currentStatus !== 'insufficient_data') {
+          send({
+            type: 'POSTURE_STATUS',
+            status: currentStatus,
+            severity: postureClassification.severity,
+            intensity: currentIntensity
+          });
+        }
+      } else {
+        setReceivedMessages((prev) => [
+          `[${timestamp}] Received: ${msg.type} ${JSON.stringify(msg)}`,
+          ...prev.slice(0, 9)
+        ]);
+      }
     });
 
     return () => {
       unsubscribe();
+      if (demoHeartbeatTimeoutRef.current) {
+        clearTimeout(demoHeartbeatTimeoutRef.current);
+      }
     };
-  }, []);
+  }, [postureClassification, postureMetrics]);
 
   const handleSendTestSignal = () => {
     const msg: SyncMessage = {
       type: 'POSTURE_STATUS',
       status: 'slouching',
-      severity: 2
+      severity: 2,
+      intensity: 0.6
     };
     send(msg);
-    setLastSentMessage(`POSTURE_STATUS (slouching, severity: 2) at ${new Date().toLocaleTimeString()}`);
+    setLastSentMessage(`MANUAL POSTURE_STATUS (slouching, severity: 2, intensity: 0.6) at ${new Date().toLocaleTimeString()}`);
   };
 
   const handleSendClear = () => {
@@ -4055,51 +6342,227 @@ export const Dashboard: React.FC = () => {
       type: 'CLEAR_INTERVENTION'
     };
     send(msg);
-    setLastSentMessage(`CLEAR_INTERVENTION at ${new Date().toLocaleTimeString()}`);
+    setLastSentMessage(`MANUAL CLEAR_INTERVENTION at ${new Date().toLocaleTimeString()}`);
   };
 
   return (
-    <div style={{ maxWidth: '1240px', margin: '2rem auto 4rem', padding: '0 1.5rem', fontFamily: 'var(--font-display)' }}>
+    <div className="dashboard-wrapper">
       {/* Header bar */}
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem', borderBottom: '1px solid var(--ink-border)', paddingBottom: '1rem' }}>
+      <div className="dashboard-header-bar">
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', flexWrap: 'wrap' }}>
-            <h1 style={{ fontSize: '1.4rem', fontWeight: 600, color: 'var(--ink-text)', margin: 0 }}>
-              POSTURE MONITOR READOUT
-            </h1>
+          <h1 style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--ink-text)', margin: '0 0 0.65rem' }}>
+            POSTURE MONITOR READOUT
+          </h1>
 
-            {/* Status indicators: plain --font-mono labels preceded by small square indicator */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', fontFamily: 'var(--font-mono)', fontSize: '0.75rem', letterSpacing: '0.04em' }}>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem', color: cameraActive ? 'var(--ink-text)' : 'var(--ink-muted)' }}>
-                <span style={{
-                  width: '6px',
-                  height: '6px',
-                  backgroundColor: cameraActive ? 'var(--signal-good)' : 'var(--signal-alert)',
-                  display: 'inline-block'
-                }} />
-                {cameraActive ? 'CAMERA: LIVE' : 'CAMERA: OFF'}
+          {/* 4-state monitoring status strip */}
+          <div className="status-row" role="status" aria-label="System status">
+            {/* 1. Camera */}
+            <span className="status-item">
+              <span
+                className={`status-dot ${cameraActive ? 'status-dot--good status-dot--pulse' : 'status-dot--alert'}`}
+                aria-hidden="true"
+              />
+              <span className={cameraActive ? 'status-label--good' : 'status-label--alert'}>
+                {cameraActive ? 'CAMERA LIVE' : 'CAMERA OFF'}
               </span>
+            </span>
 
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem', color: pipelineReady ? 'var(--ink-text)' : 'var(--ink-muted)' }}>
-                <span style={{
-                  width: '6px',
-                  height: '6px',
-                  backgroundColor: pipelineReady ? 'var(--signal-good)' : pipelineLoading ? 'var(--ink-muted)' : 'var(--signal-alert)',
-                  display: 'inline-block'
-                }} />
-                {pipelineReady ? 'MEDIAPIPE: READY' : pipelineLoading ? 'MEDIAPIPE: INITIALIZING' : 'MEDIAPIPE: ERROR'}
+            {/* 2. MediaPipe */}
+            <span className="status-item">
+              <span
+                className={`status-dot ${pipelineReady ? 'status-dot--good' : pipelineLoading ? 'status-dot--muted' : 'status-dot--alert'}`}
+                aria-hidden="true"
+              />
+              <span className={pipelineReady ? 'status-label--good' : pipelineLoading ? 'status-label--muted' : 'status-label--alert'}>
+                {pipelineReady ? 'MEDIAPIPE READY' : pipelineLoading ? 'MEDIAPIPE INIT...' : 'MEDIAPIPE ERROR'}
               </span>
-            </div>
+            </span>
+
+            {/* 3. Posture verified */}
+            <span className="status-item">
+              <span
+                className={`status-dot ${hasSeenInstructions ? 'status-dot--good' : 'status-dot--muted'}`}
+                aria-hidden="true"
+              />
+              <span className={hasSeenInstructions ? 'status-label--good' : 'status-label--muted'}>
+                {hasSeenInstructions ? 'POSTURE VERIFIED' : 'SETUP PENDING'}
+              </span>
+            </span>
+
+            {/* 4. Demo tab */}
+            <span className="status-item">
+              <span
+                className={`status-dot ${demoConnected ? 'status-dot--good status-dot--pulse' : 'status-dot--muted'}`}
+                aria-hidden="true"
+              />
+              <span className={demoConnected ? 'status-label--good' : 'status-label--muted'}>
+                {demoConnected ? 'DEMO CONNECTED' : 'DEMO WAITING'}
+              </span>
+            </span>
           </div>
+        </div>
 
-          <p style={{ color: 'var(--ink-muted)', fontSize: '0.8rem', fontFamily: 'var(--font-mono)', marginTop: '0.5rem', margin: 0 }}>
-            BROADCAST CHANNEL : <span style={{ color: 'var(--ink-text)' }}>posturesync</span> (same-origin)
-          </p>
+        {/* Header Actions */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          {hasSeenInstructions && (
+            <>
+              <button
+                id="btn-launch-demo-header"
+                className="btn btn-primary"
+                onClick={launchDemoTab}
+                style={{
+                  fontSize: '0.75rem',
+                  padding: '0.35rem 0.85rem',
+                  fontFamily: 'var(--font-mono)'
+                }}
+              >
+                Launch Demo Workspace ↗
+              </button>
+              <button
+                id="btn-review-posture-guide"
+                onClick={handleRestartSetup}
+                style={{
+                  background: 'transparent',
+                  border: '1px solid var(--ink-border)',
+                  borderRadius: '3px',
+                  padding: '0.35rem 0.75rem',
+                  color: 'var(--ink-muted)',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '0.75rem',
+                  letterSpacing: '0.04em',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.color = 'var(--ink-text)';
+                  e.currentTarget.style.borderColor = 'var(--ink-text)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.color = 'var(--ink-muted)';
+                  e.currentTarget.style.borderColor = 'var(--ink-border)';
+                }}
+              >
+                [ RESTART SETUP ]
+              </button>
+            </>
+          )}
         </div>
       </div>
 
+      {/* Posture Setup Wizard Screen / Step (Orientation) */}
+      {!hasSeenInstructions ? (
+        <div style={{ marginBottom: '2rem' }}>
+          <PostureInstructions
+            postureMetrics={postureMetrics}
+            onComplete={handleCompleteInstructions}
+            onDismiss={handleDismissInstructions}
+          />
+        </div>
+      ) : (
+        /* Posture Locked / Monitoring Active Post-Setup Banner */
+        <div
+          style={{
+            backgroundColor: 'var(--ink-panel)',
+            border: '1px solid rgba(79,216,196,0.2)',
+            borderLeft: '3px solid var(--signal-good)',
+            borderRadius: '4px',
+            padding: '1rem 1.25rem',
+            marginBottom: '1.5rem',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '1rem'
+          }}
+          role="status"
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <span
+                style={{
+                  width: '6px',
+                  height: '6px',
+                  backgroundColor: 'var(--signal-good)',
+                  display: 'inline-block',
+                  flexShrink: 0,
+                }}
+                aria-hidden="true"
+              />
+              <span
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '0.72rem',
+                  fontWeight: 700,
+                  letterSpacing: '0.08em',
+                  color: 'var(--signal-good)'
+                }}
+              >
+                POSTURE VERIFIED — MONITORING ACTIVE
+              </span>
+            </div>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '1rem',
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.68rem',
+              color: 'var(--ink-muted)',
+              flexWrap: 'wrap'
+            }}>
+              <span>TAB 01 // MONITOR <span style={{ color: 'var(--signal-good)' }}>● ACTIVE</span></span>
+              <span style={{ color: 'var(--ink-border)' }}>·</span>
+              <span>TAB 02 // WORKSPACE <span style={{ color: demoConnected ? 'var(--signal-good)' : 'var(--ink-muted)' }}>{demoConnected ? '● CONNECTED' : '○ WAITING'}</span></span>
+            </div>
+          </div>
+
+          <button
+            id="btn-launch-demo-banner"
+            className="btn btn-secondary"
+            onClick={launchDemoTab}
+            style={{
+              fontSize: '0.72rem',
+              padding: '0.35rem 0.85rem',
+              fontFamily: 'var(--font-mono)'
+            }}
+            aria-label="Open Demo Workspace in a new tab"
+          >
+            Open Demo Workspace &#8599;
+          </button>
+        </div>
+      )}
+
+      {/* Popup Blocked Warning Notice */}
+      {popupBlocked && (
+        <div
+          style={{
+            backgroundColor: 'rgba(255, 107, 74, 0.12)',
+            border: '1px solid var(--signal-alert)',
+            borderRadius: '4px',
+            padding: '0.85rem 1.25rem',
+            marginBottom: '1.5rem',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '1rem',
+            color: 'var(--ink-text)',
+            fontFamily: 'var(--font-mono)',
+            fontSize: '0.75rem'
+          }}
+        >
+          <span>Demo tab could not be opened automatically. Use OPEN DEMO WORKSPACE to continue.</span>
+          <button
+            className="btn btn-danger"
+            onClick={launchDemoTab}
+            style={{ fontSize: '0.75rem', padding: '0.35rem 0.85rem' }}
+          >
+            OPEN DEMO WORKSPACE
+          </button>
+        </div>
+      )}
+
       {/* Main 2-Column Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.35fr) minmax(0, 1fr)', gap: '1.5rem' }}>
+      <div className="dashboard-grid">
         {/* Left Column: Live Webcam View with Canvas Landmark Overlay */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           <div className="glass-panel" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column' }}>
@@ -4391,6 +6854,41 @@ export const Dashboard: React.FC = () => {
                 <span style={{ color: 'var(--ink-muted)' }}>STATE // </span>
                 <span style={{ color: poseDetected ? 'var(--signal-good)' : 'var(--ink-muted)' }}>
                   {poseDetected ? 'LOCKED' : 'SEARCHING'}
+                </span>
+              </div>
+            </div>
+
+            {/* Debouncer / Auto-broadcast Status */}
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginTop: '0.5rem',
+              padding: '0.5rem 0.75rem',
+              borderRadius: '2px',
+              background: 'var(--ink-bg)',
+              fontSize: '0.75rem',
+              fontFamily: 'var(--font-mono)',
+              border: '1px solid var(--ink-border)'
+            }}>
+              <div>
+                <span style={{ color: 'var(--ink-muted)' }}>SMOOTHED SCORE // </span>
+                <span style={{
+                  color: smoothedScore >= 0.30 ? 'var(--signal-alert)' : smoothedScore >= 0.15 ? 'var(--ink-text)' : 'var(--signal-good)'
+                }}>
+                  {smoothedScore.toFixed(3)}
+                </span>
+              </div>
+              <div>
+                <span style={{ color: 'var(--ink-muted)' }}>DEBOUNCE // </span>
+                <span style={{
+                  color:
+                    debouncerState === 'triggered' ? 'var(--signal-alert)' :
+                    debouncerState === 'accumulating' ? 'var(--ink-text)' :
+                    debouncerState === 'recovering' ? 'var(--ink-muted)' :
+                    'var(--signal-good)'
+                }}>
+                  {debouncerState.toUpperCase()}
                 </span>
               </div>
             </div>

@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { send, onMessage } from '../lib/channel';
 import type { SyncMessage } from '../types/messages';
 import { Header } from '../components/Header';
@@ -8,187 +9,344 @@ import { Discovery } from '../components/Discovery';
 import { Journal } from '../components/Journal';
 import { FinalCTA } from '../components/FinalCTA';
 import { Footer } from '../components/Footer';
-import { AlertCircle } from 'lucide-react';
+import { ShieldAlert } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
-// Intensity -> filter mapping
-// blurPx   : 0 at 0.0, up to 36px at 1.0 (past 32 so text is solidly illegible near top)
-// brightness: 1.0 -> 0.5 (halved at max)
-// saturate  : 1.0 -> 0.55 (nearly greyscale at max)
+// Nonlinear progressive visual degradation mapping:
+// Base curve:
+// 0.0 - 0.25 (Low)     : 0 -> 10px blur, 1.0 -> 0.88 brightness, 1.0 -> 0.85 sat
+// 0.25 - 0.50 (Medium) : 10 -> 28px blur, 0.88 -> 0.70 brightness, 0.85 -> 0.60 sat
+// 0.50 - 0.75 (High)   : 28 -> 48px blur, 0.70 -> 0.48 brightness, 0.60 -> 0.35 sat
+// 0.75 - 1.0 (Critical): 48 -> 72px blur, 0.48 -> 0.30 brightness, 0.35 -> 0.20 sat
 // ---------------------------------------------------------------------------
-function intensityToFilter(intensity: number): string {
-  const i = Math.max(0, Math.min(1, intensity));
-  const blurPx      = i * 36;
-  const brightness  = 1 - i * 0.5;
-  const saturate    = 1 - i * 0.45;
-  return `blur(${blurPx.toFixed(2)}px) brightness(${brightness.toFixed(3)}) saturate(${saturate.toFixed(3)})`;
+function calculateVisualParameters(effectiveIntensity: number) {
+  const i = Math.max(0, Math.min(1, effectiveIntensity));
+
+  let blurPx = 0;
+  let brightness = 1.0;
+  let saturate = 1.0;
+
+  if (i <= 0.01) {
+    blurPx = 0;
+    brightness = 1.0;
+    saturate = 1.0;
+  } else if (i <= 0.25) {
+    const t = i / 0.25;
+    blurPx = t * 10;
+    brightness = 1.0 - t * 0.12;
+    saturate = 1.0 - t * 0.15;
+  } else if (i <= 0.5) {
+    const t = (i - 0.25) / 0.25;
+    blurPx = 10 + t * 18;
+    brightness = 0.88 - t * 0.18;
+    saturate = 0.85 - t * 0.25;
+  } else if (i <= 0.75) {
+    const t = (i - 0.5) / 0.25;
+    blurPx = 28 + t * 20;
+    brightness = 0.70 - t * 0.22;
+    saturate = 0.60 - t * 0.25;
+  } else {
+    const t = (i - 0.75) / 0.25;
+    blurPx = 48 + t * 24;
+    brightness = 0.48 - t * 0.18;
+    saturate = 0.35 - t * 0.15;
+  }
+
+  const vignette = i * 0.75;
+  const filter = `blur(${blurPx.toFixed(1)}px) brightness(${brightness.toFixed(3)}) saturate(${saturate.toFixed(3)})`;
+
+  return { blurPx, brightness, saturate, vignette, filter };
 }
 
-// How fast intensity decays toward 0 per animation frame (~60fps) on recovery
-const DECAY_RATE = 0.012; // roughly 1.2 pp per frame -> ~0 in ~80 frames (~1.3 s)
+// Recovery step per frame: ~60fps -> decays 1.0 to 0.0 in ~1.4 seconds
+const DECAY_RATE_PER_FRAME = 0.012;
 
 export const Demo: React.FC = () => {
-  // The live "target" intensity set by incoming messages
-  const [intensity, setIntensity] = useState<number>(0);
-  // The rendered (possibly mid-decay) intensity value
+  // Check if posture setup has been completed in Dashboard
+  const [isSetupComplete, setIsSetupComplete] = useState<boolean>(() => {
+    return localStorage.getItem('postureInstructionsSeen') === 'true';
+  });
+
+  // Re-verify setup completion on focus or storage change
+  useEffect(() => {
+    const checkSetup = () => {
+      setIsSetupComplete(localStorage.getItem('postureInstructionsSeen') === 'true');
+    };
+    window.addEventListener('focus', checkSetup);
+    window.addEventListener('storage', checkSetup);
+    return () => {
+      window.removeEventListener('focus', checkSetup);
+      window.removeEventListener('storage', checkSetup);
+    };
+  }, []);
+
+  // Raw posture intensity and status from telemetry
+  const [baseIntensity, setBaseIntensity] = useState<number>(0);
+  const [isInterventionTriggered, setIsInterventionTriggered] = useState<boolean>(false);
+  const [isInsufficientData, setIsInsufficientData] = useState<boolean>(false);
+
+  // Time escalation tracking: timestamp when sustained deviation was triggered
+  const triggeredStartTimestampRef = useRef<number | null>(null);
+
+  // Effective rendered intensity (incorporating base telemetry + time escalation or recovery decay)
   const renderedIntensityRef = useRef<number>(0);
   const [displayIntensity, setDisplayIntensity] = useState<number>(0);
 
-  // Alert detail text (null when fully clear)
-  const [alertDetail, setAlertDetail] = useState<string | null>(null);
-
-  // rAF handle for the recovery decay loop
-  const decayRafRef = useRef<number | null>(null);
+  // rAF loop handle
+  const animationFrameRef = useRef<number | null>(null);
 
   // ---------------------------------------------------------------------------
-  // Recovery decay animation
-  // When intensity target drops to 0 (CLEAR_INTERVENTION received), we don't
-  // snap to 0 -- we run an rAF loop that steps renderedIntensity toward 0.
+  // Progressive Animation & Decay Engine
   // ---------------------------------------------------------------------------
-  const startDecay = () => {
-    if (decayRafRef.current !== null) return; // already running
-    const step = () => {
-      const current = renderedIntensityRef.current;
-      const next = Math.max(0, current - DECAY_RATE);
-      renderedIntensityRef.current = next;
-      setDisplayIntensity(next);
-      if (next > 0.001) {
-        decayRafRef.current = requestAnimationFrame(step);
+  useEffect(() => {
+    let isMounted = true;
+
+    const updateInterventionFrame = () => {
+      if (!isMounted) return;
+
+      const now = performance.now();
+
+      if (isInterventionTriggered && !isInsufficientData) {
+        // Compute time escalation:
+        // 0-2s: 0.0 bonus
+        // 2-5s: up to +0.15 bonus
+        // 5-8s: up to +0.30 bonus
+        // 8-12s: up to +0.45 bonus
+        // 12s+: up to +0.65 bonus
+        if (triggeredStartTimestampRef.current === null) {
+          triggeredStartTimestampRef.current = now;
+        }
+
+        const elapsedSec = (now - triggeredStartTimestampRef.current) / 1000;
+        let timeEscalationBonus = 0;
+        if (elapsedSec > 2) {
+          timeEscalationBonus = Math.min(0.65, (elapsedSec - 2) * 0.065);
+        }
+
+        const targetEffective = Math.min(1.0, baseIntensity + timeEscalationBonus);
+
+        // Smoothly approach target if higher
+        const current = renderedIntensityRef.current;
+        const next = current < targetEffective
+          ? Math.min(targetEffective, current + 0.02)
+          : Math.max(targetEffective, current - 0.015);
+
+        renderedIntensityRef.current = next;
+        setDisplayIntensity(next);
       } else {
-        decayRafRef.current = null;
-        setAlertDetail(null); // hide alert card once fully recovered
+        // Recovery / Good Posture / Insufficient Data: Reset time escalation timestamp and decay toward 0.0
+        triggeredStartTimestampRef.current = null;
+
+        const current = renderedIntensityRef.current;
+        if (current > 0.001) {
+          const next = Math.max(0, current - DECAY_RATE_PER_FRAME);
+          renderedIntensityRef.current = next;
+          setDisplayIntensity(next);
+        } else if (current !== 0) {
+          renderedIntensityRef.current = 0;
+          setDisplayIntensity(0);
+        }
+      }
+
+      animationFrameRef.current = requestAnimationFrame(updateInterventionFrame);
+    };
+
+    animationFrameRef.current = requestAnimationFrame(updateInterventionFrame);
+
+    return () => {
+      isMounted = false;
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
       }
     };
-    decayRafRef.current = requestAnimationFrame(step);
-  };
-
-  const stopDecay = () => {
-    if (decayRafRef.current !== null) {
-      cancelAnimationFrame(decayRafRef.current);
-      decayRafRef.current = null;
-    }
-  };
-
-  // When a new intensity target arrives:
-  //   - If > 0: snap renderedIntensityRef up immediately (CSS transition animates)
-  //   - If = 0: leave renderedIntensityRef at its current value and start the
-  //             decay loop, which will step it down to 0 over ~1.3 s
-  useEffect(() => {
-    stopDecay(); // cancel any in-progress decay before deciding what to do
-
-    if (intensity > 0) {
-      // New non-zero intensity: update immediately so CSS transition takes over
-      renderedIntensityRef.current = intensity;
-      setDisplayIntensity(intensity);
-    } else {
-      // Intensity cleared to 0: decay from wherever we currently are
-      startDecay();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [intensity]);
-
-  // Clean up on unmount
-  useEffect(() => {
-    return () => stopDecay();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isInterventionTriggered, baseIntensity, isInsufficientData]);
 
   // ---------------------------------------------------------------------------
-  // BroadcastChannel listener
+  // BroadcastChannel listener & Demo Heartbeat
   // ---------------------------------------------------------------------------
   useEffect(() => {
+    // Broadcast readiness immediately and periodically so Dashboard connection indicator stays live
     send({ type: 'DEMO_READY' });
+    const readyHeartbeat = setInterval(() => {
+      send({ type: 'DEMO_READY' });
+    }, 10000);
 
     const unsubscribe = onMessage((msg: SyncMessage) => {
-      if (msg.type === 'POSTURE_STATUS') {
-        // Always use the continuous intensity value from the broadcaster
-        const incoming = typeof msg.intensity === 'number' ? msg.intensity : 0;
-        setIntensity(incoming);
-        setAlertDetail(`${msg.status.toUpperCase()} detected`);
+      if (msg.type === 'SETUP_COMPLETE') {
+        setIsSetupComplete(true);
+      } else if (msg.type === 'POSTURE_TELEMETRY') {
+        if (msg.status === 'insufficient_data') {
+          setIsInsufficientData(true);
+          setIsInterventionTriggered(false);
+          setBaseIntensity(0);
+        } else {
+          setIsInsufficientData(false);
+
+          if (msg.status === 'good' || msg.debouncerState === 'idle') {
+            setIsInterventionTriggered(false);
+            setBaseIntensity(0);
+          } else if (msg.debouncerState === 'triggered') {
+            setIsInterventionTriggered(true);
+            const incoming = Math.max(0.2, Math.min(1.0, msg.intensity));
+            setBaseIntensity(incoming);
+          } else if (msg.debouncerState === 'recovering') {
+            setIsInterventionTriggered(false);
+            setBaseIntensity(Math.max(0, Math.min(1.0, msg.intensity)));
+          }
+        }
+      } else if (msg.type === 'POSTURE_STATUS') {
+        // Direct trigger compatibility
+        setIsInsufficientData(false);
+        setIsInterventionTriggered(true);
+        const incoming = typeof msg.intensity === 'number' ? Math.max(0.25, Math.min(1.0, msg.intensity)) : 0.4;
+        setBaseIntensity(incoming);
       } else if (msg.type === 'CLEAR_INTERVENTION') {
-        // Trigger the decay animation; alert text cleared once intensity reaches 0
-        setIntensity(0);
+        setIsInterventionTriggered(false);
+        setBaseIntensity(0);
       } else if (msg.type === 'BLINK_ALERT') {
-        setIntensity(0.5); // moderate intervention for blink alerts
-        setAlertDetail(`Low blink rate (${msg.blinksPerMin}/min). Rest your eyes.`);
+        setIsInsufficientData(false);
+        setIsInterventionTriggered(true);
+        setBaseIntensity(0.4);
       }
     });
 
-    return () => { unsubscribe(); };
+    return () => {
+      clearInterval(readyHeartbeat);
+      unsubscribe();
+    };
   }, []);
 
-  // ---------------------------------------------------------------------------
-  // Derived visual values from displayIntensity (the animated/decaying value)
-  // ---------------------------------------------------------------------------
-  const i = displayIntensity;
-  const isActive = i > 0.01;
-  const vignetteOpacity = i * 0.7; // 0 -> invisible, 1.0 -> 0.7 opacity
+  const visualParams = calculateVisualParameters(displayIntensity);
 
+  // prefers-reduced-motion: skip blur filter, use opacity degradation only
+  const prefersReducedMotion =
+    typeof window !== 'undefined' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // Content filter: apply blur only when not reduced-motion
+  const contentFilter = prefersReducedMotion
+    ? `opacity(${Math.max(0.3, 1 - displayIntensity * 0.7).toFixed(3)})`
+    : visualParams.filter;
+
+  // Scrolling is explicitly PRESERVED: pointer-events remain enabled, filter is visual only
   const contentStyle: React.CSSProperties = {
-    filter: intensityToFilter(i),
-    pointerEvents: isActive ? 'none' : 'auto',
-    userSelect: isActive ? 'none' : 'auto',
+    filter: contentFilter,
+    transition: prefersReducedMotion ? 'opacity 0.4s ease-out' : 'filter 0.9s cubic-bezier(0.16, 1, 0.3, 1)',
+    position: 'relative',
+    minHeight: '100vh',
+    width: '100%',
+    overflowX: 'hidden'
   };
 
-  return (
-    <div className="qp-page">
-      {/* Vignette overlay — always mounted, opacity driven by intensity */}
+  // If setup has not been completed in Dashboard, display the gate screen
+  if (!isSetupComplete) {
+    return (
       <div
-        className="intervention-overlay"
-        style={{ opacity: vignetteOpacity, pointerEvents: 'none' }}
-        aria-hidden="true"
-      />
-
-      {/* Posture Notice card — outside .demo-content-wrapper so it's never blurred */}
-      {isActive && (
+        style={{
+          minHeight: '100vh',
+          backgroundColor: 'var(--ink-bg)',
+          color: 'var(--ink-text)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '2rem',
+          fontFamily: 'var(--font-display)'
+        }}
+      >
         <div
           style={{
-            position: 'fixed',
-            top: '50%',
-            left: '50%',
-            transform: 'translate(-50%, -50%)',
-            zIndex: 60,
-            backgroundColor: 'var(--qp-cream-light)',
-            border: '1px solid rgba(233, 111, 103, 0.4)',
-            padding: 'var(--space-32) var(--space-48)',
-            borderRadius: '16px',
-            boxShadow: '0 24px 48px rgba(23, 59, 53, 0.2), 0 0 40px rgba(233, 111, 103, 0.25)',
-            textAlign: 'center',
             maxWidth: '520px',
-            pointerEvents: 'auto',
-            color: 'var(--qp-forest)',
+            width: '100%',
+            backgroundColor: 'var(--ink-panel)',
+            border: '1px solid var(--ink-border)',
+            borderRadius: '4px',
+            padding: '2.25rem 2rem',
+            textAlign: 'center',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center'
           }}
         >
           <div
             style={{
-              width: '56px',
-              height: '56px',
+              width: '50px',
+              height: '50px',
               borderRadius: '50%',
-              backgroundColor: 'rgba(233, 111, 103, 0.15)',
-              display: 'inline-flex',
+              backgroundColor: 'rgba(255, 107, 74, 0.15)',
+              display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              color: 'var(--qp-coral)',
-              marginBottom: 'var(--space-16)',
+              color: 'var(--signal-alert)',
+              marginBottom: '1.25rem'
             }}
           >
-            <AlertCircle size={32} strokeWidth={2} />
+            <ShieldAlert size={26} />
           </div>
-          <h2 className="qp-heading-3" style={{ marginBottom: 'var(--space-8)' }}>
-            Posture Notice
-          </h2>
-          {alertDetail && (
-            <p style={{ color: 'var(--qp-coral)', fontWeight: 600, fontSize: '0.95rem', marginBottom: 'var(--space-12)' }}>
-              {alertDetail}
-            </p>
-          )}
-          <p className="qp-body-sm" style={{ color: 'var(--qp-forest-muted)' }}>
-            Sustained posture deviation detected. This will clear gradually as your posture improves — no action needed here.
-          </p>
-        </div>
-      )}
 
-      {/* Main Content Area — filter applied inline, animated by CSS transition */}
+          <div
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.75rem',
+              letterSpacing: '0.08em',
+              color: 'var(--signal-alert)',
+              marginBottom: '0.5rem',
+              fontWeight: 600
+            }}
+          >
+            POSTURE SETUP REQUIRED
+          </div>
+
+          <h1
+            style={{
+              fontSize: '1.35rem',
+              fontWeight: 600,
+              lineHeight: 1.35,
+              color: 'var(--ink-text)',
+              margin: '0 0 1rem'
+            }}
+          >
+            Guided posture setup must be completed first.
+          </h1>
+
+          <p
+            style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: '0.9rem',
+              lineHeight: 1.6,
+              color: 'var(--ink-muted)',
+              margin: '0 0 2rem'
+            }}
+          >
+            Complete the guided posture setup in Dashboard before starting the intervention demo.
+          </p>
+
+          <Link
+            to="/dashboard"
+            className="btn btn-primary"
+            style={{
+              width: '100%',
+              padding: '0.75rem 1.25rem',
+              fontFamily: 'var(--font-display)',
+              fontSize: '0.9rem'
+            }}
+          >
+            Open Posture Dashboard
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="qp-page" style={{ position: 'relative' }}>
+      {/* Subtle vignette overlay — visual only, no text, pointer-events none */}
+      <div
+        className="intervention-overlay"
+        style={{ opacity: visualParams.vignette, pointerEvents: 'none' }}
+        aria-hidden="true"
+      />
+
+      {/* Main Content Area — scrolling remains 100% active, filter applies visually */}
       <div className="demo-content-wrapper" style={contentStyle}>
         <Header />
         <Hero />
