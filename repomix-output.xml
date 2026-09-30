@@ -54,6 +54,8 @@ src/
     Journal.tsx
     PostureInstructions.tsx
   lib/
+    blink/
+      blinkDetector.ts
     hooks/
       useVisionFeed.ts
     mediapipe/
@@ -87,6 +89,642 @@ vite.config.ts
 
 <files>
 This section contains the contents of the repository's files.
+
+<file path="src/lib/blink/blinkDetector.ts">
+import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
+
+/**
+ * 2D Euclidean distance helper for landmarks in normalized coordinates.
+ */
+function euclideanDistance2D(p1: NormalizedLandmark, p2: NormalizedLandmark): number {
+  const dx = p1.x - p2.x;
+  const dy = p1.y - p2.y;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+/**
+ * Standard 6-point indices for MediaPipe Face Mesh (468/478 landmarks):
+ *
+ * Left Eye:
+ * - Corners (horizontal): 33 (outer), 133 (inner)
+ * - Upper/Lower pairs (vertical):
+ *     160 (upper outer) <-> 144 (lower outer)
+ *     158 (upper inner) <-> 153 (lower inner)
+ *
+ * Right Eye:
+ * - Corners (horizontal): 362 (inner), 263 (outer)
+ * - Upper/Lower pairs (vertical):
+ *     385 (upper inner) <-> 380 (lower inner)
+ *     387 (upper outer) <-> 373 (lower outer)
+ */
+export const LEFT_EYE_LANDMARKS = {
+  cornerOuter: 33,
+  cornerInner: 133,
+  top1: 160,
+  bottom1: 144,
+  top2: 158,
+  bottom2: 153,
+} as const;
+
+export const RIGHT_EYE_LANDMARKS = {
+  cornerInner: 362,
+  cornerOuter: 263,
+  top1: 385,
+  bottom1: 380,
+  top2: 387,
+  bottom2: 373,
+} as const;
+
+/**
+ * Calculates Eye Aspect Ratio (EAR) for a 6-point eye landmark set:
+ *
+ * EAR = (||p2 - p6|| + ||p3 - p5||) / (2 * ||p1 - p4||)
+ */
+export function computeEyeEAR(
+  landmarks: NormalizedLandmark[],
+  indices: {
+    cornerOuter: number;
+    cornerInner: number;
+    top1: number;
+    bottom1: number;
+    top2: number;
+    bottom2: number;
+  }
+): number {
+  const c1 = landmarks[indices.cornerOuter];
+  const c2 = landmarks[indices.cornerInner];
+  const t1 = landmarks[indices.top1];
+  const b1 = landmarks[indices.bottom1];
+  const t2 = landmarks[indices.top2];
+  const b2 = landmarks[indices.bottom2];
+
+  if (!c1 || !c2 || !t1 || !b1 || !t2 || !b2) {
+    return 0;
+  }
+
+  const horizontal = euclideanDistance2D(c1, c2);
+  if (horizontal <= 0.0001) {
+    return 0;
+  }
+
+  const vertical1 = euclideanDistance2D(t1, b1);
+  const vertical2 = euclideanDistance2D(t2, b2);
+
+  return (vertical1 + vertical2) / (2.0 * horizontal);
+}
+
+/**
+ * Configurable parameters for the temporal blink state machine and rate calculator.
+ */
+export interface BlinkDetectorConfig {
+  /**
+   * EAR threshold below which eyes transition into candidate closure (CLOSING/CLOSED).
+   * Default: 0.19
+   */
+  earCloseThreshold: number;
+
+  /**
+   * EAR threshold above which eyes transition back to OPENING/OPEN (hysteresis).
+   * Must be > earCloseThreshold to prevent rapid boundary toggling.
+   * Default: 0.24
+   */
+  earOpenThreshold: number;
+
+  /**
+   * Minimum duration (in ms) the eyes must be closed for the closure to be accepted as a genuine blink.
+   * Filters out high-frequency noise, single-frame landmark tracking jitter, and sensor drops.
+   * Default: 50ms
+   */
+  minClosedDurationMs: number;
+
+  /**
+   * Maximum duration (in ms) for an accepted blink.
+   * Closures lasting longer than this are classified as sustained closures (squinting, resting eyes, drowsiness)
+   * and do NOT trigger a blink event upon reopening.
+   * Default: 400ms
+   */
+  maxClosedDurationMs: number;
+
+  /**
+   * Optional refractory period: minimum time (in ms) between consecutive accepted blink events.
+   * Prevents immediate duplicate counts caused by reopening oscillations.
+   * Default: 120ms
+   */
+  minTimeBetweenBlinksMs: number;
+
+  /**
+   * Duration of rolling window for calculating blinks per minute (in ms).
+   * Default: 60,000ms (60 seconds)
+   */
+  rollingWindowMs: number;
+
+  /**
+   * Initial observation time required before switching from 'collecting' to 'active' (in ms).
+   * Prevents immediate "0 blinks/min" artifact before sufficient observation.
+   * Default: 30,000ms (30 seconds)
+   */
+  observationPeriodMs: number;
+
+  /**
+   * Exact threshold for low blink rate alert condition: blinksPerMinute < lowBlinkRateThreshold.
+   * Exact requirement: 10.
+   * - 9 blinks/min -> LOW
+   * - 10 blinks/min -> NOT LOW
+   * - 11 blinks/min -> NOT LOW
+   * (Strict inequality: < 10, never <= 10).
+   */
+  lowBlinkRateThreshold: number;
+
+  /**
+   * Milliseconds the low-blink condition (< 10) must continuously persist before
+   * committing lowBlinkRate = true.
+   * Default: 3000ms
+   */
+  lowBlinkHoldMs: number;
+
+  /**
+   * Milliseconds the recovery condition (>= 10) must continuously persist before
+   * clearing lowBlinkRate back to false.
+   * Default: 4000ms
+   */
+  lowBlinkCooldownMs: number;
+}
+
+export const DEFAULT_BLINK_CONFIG: BlinkDetectorConfig = {
+  earCloseThreshold: 0.19,
+  earOpenThreshold: 0.24,
+  minClosedDurationMs: 50,
+  maxClosedDurationMs: 400,
+  minTimeBetweenBlinksMs: 120,
+  rollingWindowMs: 60000,
+  observationPeriodMs: 30000,
+  lowBlinkRateThreshold: 10,
+  lowBlinkHoldMs: 3000,
+  lowBlinkCooldownMs: 4000,
+};
+
+/**
+ * Temporal state machine states:
+ * - 'OPEN': Normal baseline state, eyes open and looking at screen.
+ * - 'CLOSING/CLOSED': Eyes have dropped below earCloseThreshold. Timer tracks closure duration.
+ * - 'OPENING/OPEN': Eyes crossed back above earOpenThreshold; transition committed if valid duration.
+ */
+export type BlinkStateMachineState = 'OPEN' | 'CLOSING/CLOSED' | 'OPENING/OPEN';
+
+/**
+ * High-level binary eye state for UI/dashboard consumers.
+ */
+export type EyeState = 'OPEN' | 'CLOSED';
+
+/**
+ * Blink rate measurement status:
+ * - 'collecting': Initial observation period; storing blinks, no rate alert triggered.
+ * - 'active': Rolling 60s window active and calculating reliable blinksPerMinute.
+ */
+export type BlinkRateStatus = 'collecting' | 'active';
+
+/**
+ * Debounce state for the low-blink-rate alert condition:
+ * - 'normal': Rate is healthy (>= 10) or in initial collecting period.
+ * - 'accumulating': Rate is < 10; hold timer running before committing alert.
+ * - 'triggered': Low-blink condition sustained long enough; lowBlinkRate = true.
+ * - 'recovering': Rate is >= 10; recovery cooldown timer running before clearing alert.
+ */
+export type LowBlinkDebounceState = 'normal' | 'accumulating' | 'triggered' | 'recovering';
+
+export interface BlinkDetectionResult {
+  leftEAR: number;
+  rightEAR: number;
+  averageEAR: number;
+  eyesClosed: boolean;
+  eyeState: EyeState;
+  stateMachineState: BlinkStateMachineState;
+  blinkDetected: boolean;
+  blinkCount: number;
+  blinksPerMinute: number | null;
+  blinkRateStatus: BlinkRateStatus;
+  lowBlinkRate: boolean;
+  lowBlinkDebounceState: LowBlinkDebounceState;
+  blinkTimestamps: number[];
+  observationProgress: number; // 0.0 to 1.0 (for UI progress bars during collecting)
+  lastBlinkDurationMs: number | null;
+  lastBlinkTimestampMs: number | null;
+}
+
+/**
+ * Robust temporal Blink Detector, Rolling Rate Calculator, and Debounced Alert Manager.
+ *
+ * Implements:
+ * 1. Independent Left & Right EAR calculation from MediaPipe Face Landmarker mesh.
+ * 2. Average EAR calculation.
+ * 3. Hysteresis thresholds (earCloseThreshold vs earOpenThreshold).
+ * 4. Temporal state machine: OPEN -> CLOSING/CLOSED -> OPENING/OPEN -> OPEN.
+ * 5. Duration filtering [minClosedDurationMs, maxClosedDurationMs].
+ * 6. Minimum refractory period between accepted blinks (minTimeBetweenBlinksMs).
+ * 7. Rolling 60-second window rate calculation using exact blink timestamps (never totalBlinks / runtime).
+ * 8. Initial observation period ('collecting' vs 'active') to prevent premature 0 blinks/min.
+ * 9. Low blink rate alert condition (blinksPerMinute < 10) with temporal persistence/debounce:
+ *    - Strict inequality: < 10 (9 is low, 10 and 11 are not low).
+ *    - Only active after observation period completes.
+ *    - Prevents rapid 9.9 -> 10.1 toggling using holdMs and cooldownMs timers.
+ *    - Separates raw calculated rate from debounced alert state.
+ * 10. Frame-rate independent: operates purely on monotonically increasing millisecond timestamps.
+ * 11. In-memory storage with complete reset upon vision/camera restart.
+ */
+export class BlinkDetector {
+  private config: BlinkDetectorConfig;
+  private state: BlinkStateMachineState = 'OPEN';
+  private closedStartTimeMs: number | null = null;
+  private blinkCount = 0;
+  private lastBlinkDurationMs: number | null = null;
+  private lastBlinkTimestampMs: number | null = null;
+  private disqualifiedSustainedClosure = false;
+
+  // In-memory timestamps of accepted blink events for rolling window calculation
+  private blinkTimestamps: number[] = [];
+
+  // Session start time for observation period
+  private sessionStartTimeMs: number | null = null;
+
+  // Temporal debounce state for low-blink condition
+  private lowBlinkDebounceState: LowBlinkDebounceState = 'normal';
+  private lowBlinkAccumulatingStartMs: number | null = null;
+  private lowBlinkRecoveringStartMs: number | null = null;
+  private lowBlinkRateAlert = false;
+
+  // Stored previous valid EARs for fallback when face landmarks are momentarily dropped
+  private lastValidLeftEAR = 0.3;
+  private lastValidRightEAR = 0.3;
+  private lastValidAverageEAR = 0.3;
+
+  constructor(config: Partial<BlinkDetectorConfig> = {}) {
+    this.config = {
+      ...DEFAULT_BLINK_CONFIG,
+      ...config,
+    };
+  }
+
+  public updateConfig(newConfig: Partial<BlinkDetectorConfig>): void {
+    this.config = {
+      ...this.config,
+      ...newConfig,
+    };
+  }
+
+  public getConfig(): Readonly<BlinkDetectorConfig> {
+    return { ...this.config };
+  }
+
+  /**
+   * Resets internal detector state, timestamps, debouncer, and counters.
+   * Called when camera or vision session restarts.
+   */
+  public reset(fullReset = true): void {
+    this.state = 'OPEN';
+    this.closedStartTimeMs = null;
+    this.disqualifiedSustainedClosure = false;
+    if (fullReset) {
+      this.blinkCount = 0;
+      this.lastBlinkDurationMs = null;
+      this.lastBlinkTimestampMs = null;
+      this.blinkTimestamps = [];
+      this.sessionStartTimeMs = null;
+      this.lowBlinkDebounceState = 'normal';
+      this.lowBlinkAccumulatingStartMs = null;
+      this.lowBlinkRecoveringStartMs = null;
+      this.lowBlinkRateAlert = false;
+      this.lastValidLeftEAR = 0.3;
+      this.lastValidRightEAR = 0.3;
+      this.lastValidAverageEAR = 0.3;
+    }
+  }
+
+  /**
+   * Process a frame's face landmarks and timestamp.
+   *
+   * @param faceLandmarks 468/478 normalized landmarks from MediaPipe FaceLandmarker, or null/undefined
+   * @param timestampMs Monotonic frame timestamp in milliseconds
+   */
+  public update(
+    faceLandmarks: NormalizedLandmark[] | undefined | null,
+    timestampMs: number
+  ): BlinkDetectionResult {
+    if (this.sessionStartTimeMs === null) {
+      this.sessionStartTimeMs = timestampMs;
+    }
+
+    // Prune rolling window timestamps older than rollingWindowMs
+    this.pruneOldTimestamps(timestampMs);
+
+    // Compute rate status & observation progress
+    const { blinkRateStatus, blinksPerMinute, observationProgress } =
+      this.computeRateMetrics(timestampMs);
+
+    // Update debounced low-blink alert condition
+    this.updateLowBlinkDebounce(blinksPerMinute, blinkRateStatus, timestampMs);
+
+    // Handle missing/invalid face landmarks safely
+    if (!faceLandmarks || faceLandmarks.length < 400) {
+      return {
+        leftEAR: this.lastValidLeftEAR,
+        rightEAR: this.lastValidRightEAR,
+        averageEAR: this.lastValidAverageEAR,
+        eyesClosed: this.state === 'CLOSING/CLOSED',
+        eyeState: this.state === 'CLOSING/CLOSED' ? 'CLOSED' : 'OPEN',
+        stateMachineState: this.state,
+        blinkDetected: false,
+        blinkCount: this.blinkCount,
+        blinksPerMinute,
+        blinkRateStatus,
+        lowBlinkRate: this.lowBlinkRateAlert,
+        lowBlinkDebounceState: this.lowBlinkDebounceState,
+        blinkTimestamps: [...this.blinkTimestamps],
+        observationProgress,
+        lastBlinkDurationMs: this.lastBlinkDurationMs,
+        lastBlinkTimestampMs: this.lastBlinkTimestampMs,
+      };
+    }
+
+    // 1. Calculate individual eye EARs
+    const leftEAR = computeEyeEAR(faceLandmarks, LEFT_EYE_LANDMARKS);
+    const rightEAR = computeEyeEAR(faceLandmarks, RIGHT_EYE_LANDMARKS);
+    const averageEAR = (leftEAR + rightEAR) / 2.0;
+
+    // Cache valid metrics
+    this.lastValidLeftEAR = leftEAR;
+    this.lastValidRightEAR = rightEAR;
+    this.lastValidAverageEAR = averageEAR;
+
+    return this.processEAR(averageEAR, timestampMs, leftEAR, rightEAR);
+  }
+
+  /**
+   * Core temporal state machine processing an EAR reading.
+   * Public for deterministic testing with synthetic EAR sequences.
+   */
+  public processEAR(
+    ear: number,
+    timestampMs: number,
+    leftEAR: number = ear,
+    rightEAR: number = ear
+  ): BlinkDetectionResult {
+    if (this.sessionStartTimeMs === null) {
+      this.sessionStartTimeMs = timestampMs;
+    }
+
+    let blinkDetected = false;
+
+    switch (this.state) {
+      case 'OPEN': {
+        // Transition condition: EAR drops below or equal to close threshold.
+        // Hysteresis: We ONLY transition to CLOSING/CLOSED when ear <= earCloseThreshold.
+        if (ear <= this.config.earCloseThreshold) {
+          this.state = 'CLOSING/CLOSED';
+          this.closedStartTimeMs = timestampMs;
+          this.disqualifiedSustainedClosure = false;
+        }
+        break;
+      }
+
+      case 'CLOSING/CLOSED': {
+        // Check if closure duration has exceeded maxClosedDurationMs while still closed.
+        if (this.closedStartTimeMs !== null) {
+          const currentDuration = timestampMs - this.closedStartTimeMs;
+          if (currentDuration > this.config.maxClosedDurationMs) {
+            this.disqualifiedSustainedClosure = true;
+          }
+        }
+
+        // Transition condition: EAR rises above or equal to open threshold.
+        // Stays CLOSING/CLOSED until ear >= earOpenThreshold.
+        if (ear >= this.config.earOpenThreshold) {
+          this.state = 'OPENING/OPEN';
+
+          if (this.closedStartTimeMs !== null) {
+            const closedDuration = timestampMs - this.closedStartTimeMs;
+
+            const isDurationValid =
+              !this.disqualifiedSustainedClosure &&
+              closedDuration >= this.config.minClosedDurationMs &&
+              closedDuration <= this.config.maxClosedDurationMs;
+
+            const timeSinceLastBlink =
+              this.lastBlinkTimestampMs !== null
+                ? timestampMs - this.lastBlinkTimestampMs
+                : Infinity;
+
+            const isRefractorySatisfied =
+              timeSinceLastBlink >= this.config.minTimeBetweenBlinksMs;
+
+            if (isDurationValid && isRefractorySatisfied) {
+              // Valid single blink committed!
+              this.blinkCount += 1;
+              blinkDetected = true;
+              this.lastBlinkDurationMs = Math.round(closedDuration);
+              this.lastBlinkTimestampMs = timestampMs;
+              // Add timestamp for rolling 60s window
+              this.blinkTimestamps.push(timestampMs);
+            }
+          }
+
+          this.closedStartTimeMs = null;
+          this.disqualifiedSustainedClosure = false;
+          this.state = 'OPEN';
+        }
+        break;
+      }
+
+      case 'OPENING/OPEN': {
+        this.state = 'OPEN';
+        break;
+      }
+    }
+
+    // Prune rolling window timestamps older than rollingWindowMs
+    this.pruneOldTimestamps(timestampMs);
+
+    // Compute rate status & observation progress
+    const { blinkRateStatus, blinksPerMinute, observationProgress } =
+      this.computeRateMetrics(timestampMs);
+
+    // Update debounced low-blink alert condition
+    this.updateLowBlinkDebounce(blinksPerMinute, blinkRateStatus, timestampMs);
+
+    const eyesClosed = this.state === 'CLOSING/CLOSED';
+
+    return {
+      leftEAR,
+      rightEAR,
+      averageEAR: ear,
+      eyesClosed,
+      eyeState: eyesClosed ? 'CLOSED' : 'OPEN',
+      stateMachineState: this.state,
+      blinkDetected,
+      blinkCount: this.blinkCount,
+      blinksPerMinute,
+      blinkRateStatus,
+      lowBlinkRate: this.lowBlinkRateAlert,
+      lowBlinkDebounceState: this.lowBlinkDebounceState,
+      blinkTimestamps: [...this.blinkTimestamps],
+      observationProgress,
+      lastBlinkDurationMs: this.lastBlinkDurationMs,
+      lastBlinkTimestampMs: this.lastBlinkTimestampMs,
+    };
+  }
+
+  /**
+   * Temporal debounce engine for the low-blink condition:
+   * Condition: blinksPerMinute < lowBlinkRateThreshold (exact < 10).
+   *
+   * Rules:
+   * - During 'collecting': Alert cannot fire; lowBlinkRate is false.
+   * - In 'active':
+   *   - If blinksPerMinute < 10: Begins accumulating for lowBlinkHoldMs before committing alert.
+   *     If rate recovers back to >= 10 before holdMs, accumulation is cancelled.
+   *   - Once alert is committed (triggered):
+   *     If rate rises to >= 10: Begins recovery cooldown for lowBlinkCooldownMs before clearing alert.
+   *     If rate dips back below 10 during cooldown, recovery is cancelled and alert remains.
+   */
+  private updateLowBlinkDebounce(
+    blinksPerMinute: number | null,
+    status: BlinkRateStatus,
+    timestampMs: number
+  ): void {
+    if (status !== 'active' || blinksPerMinute === null) {
+      // Inactive / collecting: alert is suppressed
+      this.lowBlinkDebounceState = 'normal';
+      this.lowBlinkAccumulatingStartMs = null;
+      this.lowBlinkRecoveringStartMs = null;
+      this.lowBlinkRateAlert = false;
+      return;
+    }
+
+    // Exact requirement: blinksPerMinute < lowBlinkRateThreshold (< 10)
+    // 9 is low, 10 and 11 are NOT low.
+    const isCurrentlyLow = blinksPerMinute < this.config.lowBlinkRateThreshold;
+
+    switch (this.lowBlinkDebounceState) {
+      case 'normal': {
+        if (isCurrentlyLow) {
+          this.lowBlinkDebounceState = 'accumulating';
+          this.lowBlinkAccumulatingStartMs = timestampMs;
+        }
+        break;
+      }
+
+      case 'accumulating': {
+        if (!isCurrentlyLow) {
+          // Fluctuated back up to >= 10 before hold duration: abort accumulation
+          this.lowBlinkDebounceState = 'normal';
+          this.lowBlinkAccumulatingStartMs = null;
+        } else if (
+          this.lowBlinkAccumulatingStartMs !== null &&
+          timestampMs - this.lowBlinkAccumulatingStartMs >= this.config.lowBlinkHoldMs
+        ) {
+          // Low rate sustained for lowBlinkHoldMs: commit alert!
+          this.lowBlinkDebounceState = 'triggered';
+          this.lowBlinkAccumulatingStartMs = null;
+          this.lowBlinkRateAlert = true;
+        }
+        break;
+      }
+
+      case 'triggered': {
+        if (!isCurrentlyLow) {
+          // Rate rose to >= 10: begin recovery cooldown
+          this.lowBlinkDebounceState = 'recovering';
+          this.lowBlinkRecoveringStartMs = timestampMs;
+        }
+        break;
+      }
+
+      case 'recovering': {
+        if (isCurrentlyLow) {
+          // Dipped back below 10 during recovery cooldown: abort recovery and stay triggered
+          this.lowBlinkDebounceState = 'triggered';
+          this.lowBlinkRecoveringStartMs = null;
+        } else if (
+          this.lowBlinkRecoveringStartMs !== null &&
+          timestampMs - this.lowBlinkRecoveringStartMs >= this.config.lowBlinkCooldownMs
+        ) {
+          // Healthy rate sustained for lowBlinkCooldownMs: clear alert!
+          this.lowBlinkDebounceState = 'normal';
+          this.lowBlinkRecoveringStartMs = null;
+          this.lowBlinkRateAlert = false;
+        }
+        break;
+      }
+    }
+  }
+
+  /**
+   * Removes blink timestamps that are older than rollingWindowMs (60s) from timestampMs.
+   */
+  private pruneOldTimestamps(timestampMs: number): void {
+    const cutoff = timestampMs - this.config.rollingWindowMs;
+    let firstKeepIndex = 0;
+    while (
+      firstKeepIndex < this.blinkTimestamps.length &&
+      this.blinkTimestamps[firstKeepIndex] < cutoff
+    ) {
+      firstKeepIndex++;
+    }
+    if (firstKeepIndex > 0) {
+      this.blinkTimestamps.splice(0, firstKeepIndex);
+    }
+  }
+
+  /**
+   * Calculates blinks per minute over the rolling 60-second window,
+   * accounting for the initial observation period.
+   */
+  private computeRateMetrics(timestampMs: number): {
+    blinkRateStatus: BlinkRateStatus;
+    blinksPerMinute: number | null;
+    observationProgress: number;
+  } {
+    const elapsedSessionTime =
+      this.sessionStartTimeMs !== null
+        ? Math.max(0, timestampMs - this.sessionStartTimeMs)
+        : 0;
+
+    const observationProgress = Math.min(
+      1.0,
+      elapsedSessionTime / this.config.observationPeriodMs
+    );
+
+    const isObservationComplete =
+      elapsedSessionTime >= this.config.observationPeriodMs;
+
+    if (!isObservationComplete) {
+      // During collecting, we do not emit a premature rate
+      return {
+        blinkRateStatus: 'collecting',
+        blinksPerMinute: null,
+        observationProgress,
+      };
+    }
+
+    // When active, blinks in the 60-second window represent the user's recent rate
+    // If observation has completed (e.g. 30s-60s), normalize to blinks/min for current window width
+    const activeWindowDurationMs = Math.min(
+      this.config.rollingWindowMs,
+      elapsedSessionTime
+    );
+    const windowMinutes = activeWindowDurationMs / 60000.0;
+    const rate =
+      windowMinutes > 0
+        ? Math.round(this.blinkTimestamps.length / windowMinutes)
+        : this.blinkTimestamps.length;
+
+    return {
+      blinkRateStatus: 'active',
+      blinksPerMinute: rate,
+      observationProgress: 1.0,
+    };
+  }
+}
+</file>
 
 <file path="public/favicon.svg">
 <svg xmlns="http://www.w3.org/2000/svg" width="48" height="46" fill="none" viewBox="0 0 48 46"><path fill="#863bff" d="M25.946 44.938c-.664.845-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.287c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.497 0-3.578-1.842-3.578H1.237c-.92 0-1.456-1.04-.92-1.788L10.013.474c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.579 1.842 3.579h11.377c.943 0 1.473 1.088.89 1.83L25.947 44.94z" style="fill:#863bff;fill:color(display-p3 .5252 .23 1);fill-opacity:1"/><mask id="a" width="48" height="46" x="0" y="0" maskUnits="userSpaceOnUse" style="mask-type:alpha"><path fill="#000" d="M25.842 44.938c-.664.844-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.183c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.498 0-3.579-1.842-3.579H1.133c-.92 0-1.456-1.04-.92-1.787L9.91.473c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.578 1.842 3.578h11.377c.943 0 1.473 1.088.89 1.832L25.843 44.94z" style="fill:#000;fill-opacity:1"/></mask><g mask="url(#a)"><g filter="url(#b)"><ellipse cx="5.508" cy="14.704" fill="#ede6ff" rx="5.508" ry="14.704" style="fill:#ede6ff;fill:color(display-p3 .9275 .9033 1);fill-opacity:1" transform="matrix(.00324 1 1 -.00324 -4.47 31.516)"/></g><g filter="url(#c)"><ellipse cx="10.399" cy="29.851" fill="#ede6ff" rx="10.399" ry="29.851" style="fill:#ede6ff;fill:color(display-p3 .9275 .9033 1);fill-opacity:1" transform="matrix(.00324 1 1 -.00324 -39.328 7.883)"/></g><g filter="url(#d)"><ellipse cx="5.508" cy="30.487" fill="#7e14ff" rx="5.508" ry="30.487" style="fill:#7e14ff;fill:color(display-p3 .4922 .0767 1);fill-opacity:1" transform="rotate(89.814 -25.913 -14.639)scale(1 -1)"/></g><g filter="url(#e)"><ellipse cx="5.508" cy="30.599" fill="#7e14ff" rx="5.508" ry="30.599" style="fill:#7e14ff;fill:color(display-p3 .4922 .0767 1);fill-opacity:1" transform="rotate(89.814 -32.644 -3.334)scale(1 -1)"/></g><g filter="url(#f)"><ellipse cx="5.508" cy="30.599" fill="#7e14ff" rx="5.508" ry="30.599" style="fill:#7e14ff;fill:color(display-p3 .4922 .0767 1);fill-opacity:1" transform="matrix(.00324 1 1 -.00324 -34.34 30.47)"/></g><g filter="url(#g)"><ellipse cx="14.072" cy="22.078" fill="#ede6ff" rx="14.072" ry="22.078" style="fill:#ede6ff;fill:color(display-p3 .9275 .9033 1);fill-opacity:1" transform="rotate(93.35 24.506 48.493)scale(-1 1)"/></g><g filter="url(#h)"><ellipse cx="3.47" cy="21.501" fill="#7e14ff" rx="3.47" ry="21.501" style="fill:#7e14ff;fill:color(display-p3 .4922 .0767 1);fill-opacity:1" transform="rotate(89.009 28.708 47.59)scale(-1 1)"/></g><g filter="url(#i)"><ellipse cx="3.47" cy="21.501" fill="#7e14ff" rx="3.47" ry="21.501" style="fill:#7e14ff;fill:color(display-p3 .4922 .0767 1);fill-opacity:1" transform="rotate(89.009 28.708 47.59)scale(-1 1)"/></g><g filter="url(#j)"><ellipse cx=".387" cy="8.972" fill="#7e14ff" rx="4.407" ry="29.108" style="fill:#7e14ff;fill:color(display-p3 .4922 .0767 1);fill-opacity:1" transform="rotate(39.51 .387 8.972)"/></g><g filter="url(#k)"><ellipse cx="47.523" cy="-6.092" fill="#7e14ff" rx="4.407" ry="29.108" style="fill:#7e14ff;fill:color(display-p3 .4922 .0767 1);fill-opacity:1" transform="rotate(37.892 47.523 -6.092)"/></g><g filter="url(#l)"><ellipse cx="41.412" cy="6.333" fill="#47bfff" rx="5.971" ry="9.665" style="fill:#47bfff;fill:color(display-p3 .2799 .748 1);fill-opacity:1" transform="rotate(37.892 41.412 6.333)"/></g><g filter="url(#m)"><ellipse cx="-1.879" cy="38.332" fill="#7e14ff" rx="4.407" ry="29.108" style="fill:#7e14ff;fill:color(display-p3 .4922 .0767 1);fill-opacity:1" transform="rotate(37.892 -1.88 38.332)"/></g><g filter="url(#n)"><ellipse cx="-1.879" cy="38.332" fill="#7e14ff" rx="4.407" ry="29.108" style="fill:#7e14ff;fill:color(display-p3 .4922 .0767 1);fill-opacity:1" transform="rotate(37.892 -1.88 38.332)"/></g><g filter="url(#o)"><ellipse cx="35.651" cy="29.907" fill="#7e14ff" rx="4.407" ry="29.108" style="fill:#7e14ff;fill:color(display-p3 .4922 .0767 1);fill-opacity:1" transform="rotate(37.892 35.651 29.907)"/></g><g filter="url(#p)"><ellipse cx="38.418" cy="32.4" fill="#47bfff" rx="5.971" ry="15.297" style="fill:#47bfff;fill:color(display-p3 .2799 .748 1);fill-opacity:1" transform="rotate(37.892 38.418 32.4)"/></g></g><defs><filter id="b" width="60.045" height="41.654" x="-19.77" y="16.149" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="7.659"/></filter><filter id="c" width="90.34" height="51.437" x="-54.613" y="-7.533" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="7.659"/></filter><filter id="d" width="79.355" height="29.4" x="-49.64" y="2.03" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="e" width="79.579" height="29.4" x="-45.045" y="20.029" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="f" width="79.579" height="29.4" x="-43.513" y="21.178" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="g" width="74.749" height="58.852" x="15.756" y="-17.901" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="7.659"/></filter><filter id="h" width="61.377" height="25.362" x="23.548" y="2.284" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="i" width="61.377" height="25.362" x="23.548" y="2.284" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="j" width="56.045" height="63.649" x="-27.636" y="-22.853" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="k" width="54.814" height="64.646" x="20.116" y="-38.415" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="l" width="33.541" height="35.313" x="24.641" y="-11.323" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="m" width="54.814" height="64.646" x="-29.286" y="6.009" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="n" width="54.814" height="64.646" x="-29.286" y="6.009" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="o" width="54.814" height="64.646" x="8.244" y="-2.416" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="p" width="39.409" height="43.623" x="18.713" y="10.588" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter></defs></svg>
@@ -909,848 +1547,6 @@ export const Journal: React.FC = () => {
     </section>
   );
 };
-</file>
-
-<file path="src/components/PostureInstructions.tsx">
-import React, { useEffect, useRef, useState } from 'react';
-import type { PostureMetrics } from '../lib/posture/postureMetrics';
-import { POSTURE_THRESHOLDS } from '../lib/posture/postureClassifier';
-
-export interface PostureInstructionsProps {
-  postureMetrics: PostureMetrics | null;
-  onComplete: () => void;
-  onDismiss?: () => void;
-  isOverlay?: boolean;
-}
-
-export type SetupStep = 1 | 2 | 3 | 4 | 5;
-
-export const PostureInstructions: React.FC<PostureInstructionsProps> = ({
-  postureMetrics,
-  onComplete,
-  onDismiss,
-}) => {
-  const [currentStep, setCurrentStep] = useState<SetupStep>(1);
-  // Flash message shown briefly after a step is accepted before advancing
-  const [acceptedFlash, setAcceptedFlash] = useState<string | null>(null);
-
-  // Step 5 Hold timer state (ms)
-  const REQUIRED_HOLD_MS = 3000;
-  const [holdProgressMs, setHoldProgressMs] = useState<number>(0);
-  const holdStartTimestampRef = useRef<number | null>(null);
-
-  // ---------------------------------------------------------------------------
-  // Condition checks corresponding to the fixed ergonomic thresholds
-  // ---------------------------------------------------------------------------
-  const isStep1Valid = Boolean(
-    postureMetrics?.isValid &&
-    (postureMetrics?.confidence ?? 0) >= POSTURE_THRESHOLDS.MIN_CONFIDENCE
-  );
-
-  const isStep2Valid = Boolean(
-    isStep1Valid &&
-    postureMetrics?.shoulderTiltDeg !== null &&
-    postureMetrics?.shoulderTiltDeg !== undefined &&
-    postureMetrics.shoulderTiltDeg < POSTURE_THRESHOLDS.SHOULDER_TILT_MILD
-  );
-
-  const isStep3Valid = Boolean(
-    isStep2Valid &&
-    postureMetrics?.lateralTiltDeg !== null &&
-    postureMetrics?.lateralTiltDeg !== undefined &&
-    postureMetrics.lateralTiltDeg < POSTURE_THRESHOLDS.LATERAL_TILT_MILD
-  );
-
-  const isStep4HeadForwardValid = Boolean(
-    postureMetrics?.headForwardOffset !== null &&
-    postureMetrics?.headForwardOffset !== undefined &&
-    postureMetrics.headForwardOffset < POSTURE_THRESHOLDS.HEAD_FORWARD_MILD
-  );
-
-  const isStep4HeadAngleValid = Boolean(
-    postureMetrics?.headTorsoAngleDeg !== null &&
-    postureMetrics?.headTorsoAngleDeg !== undefined &&
-    postureMetrics.headTorsoAngleDeg < POSTURE_THRESHOLDS.HEAD_TORSO_ANGLE_MILD
-  );
-
-  const isStep4Valid = Boolean(isStep3Valid && isStep4HeadForwardValid && isStep4HeadAngleValid);
-
-  const isAllPostureAcceptable = isStep1Valid && isStep2Valid && isStep3Valid && isStep4Valid;
-
-  // ---------------------------------------------------------------------------
-  // Automatic step progression for Steps 1 through 4 with acceptance flash
-  // ---------------------------------------------------------------------------
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    if (currentStep === 1 && isStep1Valid) {
-      setAcceptedFlash('FRAME LOCKED');
-      timer = setTimeout(() => {
-        setAcceptedFlash(null);
-        setCurrentStep(2);
-      }, 700);
-    } else if (currentStep === 2 && isStep2Valid) {
-      setAcceptedFlash('SHOULDER ALIGNMENT ACCEPTED');
-      timer = setTimeout(() => {
-        setAcceptedFlash(null);
-        setCurrentStep(3);
-      }, 700);
-    } else if (currentStep === 3 && isStep3Valid) {
-      setAcceptedFlash('TORSO ALIGNMENT ACCEPTED');
-      timer = setTimeout(() => {
-        setAcceptedFlash(null);
-        setCurrentStep(4);
-      }, 700);
-    } else if (currentStep === 4 && isStep4Valid) {
-      setAcceptedFlash('HEAD ALIGNMENT ACCEPTED');
-      timer = setTimeout(() => {
-        setAcceptedFlash(null);
-        setCurrentStep(5);
-      }, 700);
-    }
-
-    return () => {
-      if (timer) clearTimeout(timer);
-    };
-  }, [currentStep, isStep1Valid, isStep2Valid, isStep3Valid, isStep4Valid]);
-
-  // ---------------------------------------------------------------------------
-  // Step 5 Hold Timer Management
-  // ---------------------------------------------------------------------------
-  useEffect(() => {
-    if (currentStep !== 5) {
-      setHoldProgressMs(0);
-      holdStartTimestampRef.current = null;
-      return;
-    }
-
-    if (holdProgressMs >= REQUIRED_HOLD_MS) return;
-
-    let animFrame: number;
-
-    const tick = () => {
-      if (!isAllPostureAcceptable) {
-        holdStartTimestampRef.current = null;
-        setHoldProgressMs(0);
-        animFrame = requestAnimationFrame(tick);
-        return;
-      }
-
-      const now = performance.now();
-      if (holdStartTimestampRef.current === null) {
-        holdStartTimestampRef.current = now;
-      }
-
-      const elapsed = Math.min(REQUIRED_HOLD_MS, now - holdStartTimestampRef.current);
-      setHoldProgressMs(elapsed);
-
-      if (elapsed < REQUIRED_HOLD_MS) {
-        animFrame = requestAnimationFrame(tick);
-      }
-    };
-
-    animFrame = requestAnimationFrame(tick);
-
-    return () => {
-      cancelAnimationFrame(animFrame);
-    };
-  }, [currentStep, isAllPostureAcceptable, holdProgressMs]);
-
-  const handleRestart = () => {
-    setCurrentStep(1);
-    setAcceptedFlash(null);
-    setHoldProgressMs(0);
-    holdStartTimestampRef.current = null;
-  };
-
-  const isHoldComplete = currentStep === 5 && holdProgressMs >= REQUIRED_HOLD_MS;
-
-  // ---------------------------------------------------------------------------
-  // Per-step content: instruction + the ONE relevant metric to show
-  // ---------------------------------------------------------------------------
-  type StepContent = {
-    title: string;
-    instruction: string;
-    guidance: string;
-    metricLabel: string;
-    metricValue: string;
-    metricLimit: string;
-    isAccepted: boolean;
-  };
-
-  const getStepContent = (): StepContent => {
-    switch (currentStep) {
-      case 1:
-        return {
-          title: 'FRAME YOURSELF',
-          instruction: 'Position yourself in the camera frame.',
-          guidance: 'Move back until your head, shoulders and upper torso are clearly visible.',
-          metricLabel: 'PERSON DETECTION',
-          metricValue: isStep1Valid ? 'PRESENT' : 'SEARCHING...',
-          metricLimit: 'Visible head + shoulders required',
-          isAccepted: isStep1Valid,
-        };
-      case 2:
-        return {
-          title: 'LEVEL YOUR SHOULDERS',
-          instruction: 'Bring your shoulders to the same height.',
-          guidance: 'Raise or lower one shoulder until the shoulder line is level.',
-          metricLabel: 'SHOULDER TILT',
-          metricValue:
-            postureMetrics?.shoulderTiltDeg !== null && postureMetrics?.shoulderTiltDeg !== undefined
-              ? `${postureMetrics.shoulderTiltDeg}\u00b0`
-              : '\u2014',
-          metricLimit: `Target: < ${POSTURE_THRESHOLDS.SHOULDER_TILT_MILD}\u00b0`,
-          isAccepted: isStep2Valid,
-        };
-      case 3:
-        return {
-          title: 'CENTER YOUR TORSO',
-          instruction: 'Sit upright with your torso centered.',
-          guidance: 'Bring your torso back toward the center without leaning left or right.',
-          metricLabel: 'LATERAL TILT',
-          metricValue:
-            postureMetrics?.lateralTiltDeg !== null && postureMetrics?.lateralTiltDeg !== undefined
-              ? `${postureMetrics.lateralTiltDeg}\u00b0`
-              : '\u2014',
-          metricLimit: `Target: < ${POSTURE_THRESHOLDS.LATERAL_TILT_MILD}\u00b0`,
-          isAccepted: isStep3Valid,
-        };
-      case 4:
-        return {
-          title: 'ALIGN YOUR HEAD',
-          instruction: 'Bring your head back over your shoulders.',
-          guidance: !isStep4HeadForwardValid
-            ? 'Move your head slightly back toward your shoulders.'
-            : 'Raise your chin to reduce the forward neck angle.',
-          metricLabel: 'HEAD FORWARD OFFSET',
-          metricValue:
-            postureMetrics?.headForwardOffset !== null && postureMetrics?.headForwardOffset !== undefined
-              ? `${postureMetrics.headForwardOffset}`
-              : '\u2014',
-          metricLimit: `Target: < ${POSTURE_THRESHOLDS.HEAD_FORWARD_MILD}`,
-          isAccepted: isStep4Valid,
-        };
-      case 5:
-        return {
-          title: 'HOLD POSTURE',
-          instruction: 'Maintain this position for 3 seconds.',
-          guidance: isHoldComplete
-            ? 'Posture verified. Monitoring is now active.'
-            : isAllPostureAcceptable
-            ? 'Hold steady. Verifying alignment...'
-            : !isStep1Valid
-            ? 'Return to the camera frame.'
-            : !isStep2Valid
-            ? 'Re-level your shoulders.'
-            : !isStep3Valid
-            ? 'Re-center your torso.'
-            : 'Re-align your head.',
-          metricLabel: 'HOLD PROGRESS',
-          metricValue: isHoldComplete
-            ? 'VERIFIED'
-            : isAllPostureAcceptable
-            ? `${(holdProgressMs / 1000).toFixed(1)}s`
-            : 'DEVIATED',
-          metricLimit: 'Continuous 3.0 s hold',
-          isAccepted: isHoldComplete,
-        };
-    }
-  };
-
-  const step = getStepContent();
-
-  // ---------------------------------------------------------------------------
-  // Render
-  // ---------------------------------------------------------------------------
-  return (
-    <div
-      className="glass-panel"
-      style={{
-        padding: '1.75rem',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '1.25rem',
-      }}
-    >
-      {/* â”€â”€ Top header row â”€â”€ */}
-      <div
-        className="panel-header"
-        style={{ margin: 0, paddingBottom: '0.75rem' }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-          <span
-            style={{
-              width: '6px',
-              height: '6px',
-              backgroundColor: isHoldComplete ? 'var(--signal-good)' : 'var(--ink-muted)',
-              display: 'inline-block',
-              flexShrink: 0,
-            }}
-            aria-hidden="true"
-          />
-          <span
-            style={{
-              fontFamily: 'var(--font-mono)',
-              fontSize: '0.72rem',
-              letterSpacing: '0.08em',
-              color: 'var(--ink-muted)',
-              fontWeight: 500,
-            }}
-          >
-            POSTURE SETUP
-          </span>
-          <span
-            style={{
-              fontFamily: 'var(--font-mono)',
-              fontSize: '0.72rem',
-              letterSpacing: '0.08em',
-              color: 'var(--ink-text)',
-              fontWeight: 600,
-            }}
-          >
-            // STEP 0{currentStep} / 05
-          </span>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <button
-            onClick={handleRestart}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              fontFamily: 'var(--font-mono)',
-              fontSize: '0.7rem',
-              color: 'var(--ink-muted)',
-              cursor: 'pointer',
-              padding: '2px 6px',
-              letterSpacing: '0.04em',
-            }}
-            title="Restart posture setup from Step 1"
-            aria-label="Restart posture setup"
-          >
-            [ RESTART ]
-          </button>
-
-          {onDismiss && (
-            <button
-              onClick={onDismiss}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                fontFamily: 'var(--font-mono)',
-                fontSize: '0.7rem',
-                color: 'var(--ink-muted)',
-                cursor: 'pointer',
-                padding: '2px 6px',
-                letterSpacing: '0.04em',
-              }}
-              title="Dismiss setup guide"
-              aria-label="Dismiss setup guide"
-            >
-              [ SKIP ]
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* â”€â”€ Progress rail â”€â”€ */}
-      <div
-        className="setup-progress-rail"
-        style={{ gridTemplateColumns: `repeat(5, 1fr)` }}
-        role="progressbar"
-        aria-valuenow={currentStep}
-        aria-valuemin={1}
-        aria-valuemax={5}
-        aria-label={`Setup step ${currentStep} of 5`}
-      >
-        {([1, 2, 3, 4, 5] as SetupStep[]).map((s) => {
-          const isPassed = currentStep > s || (s === 5 && isHoldComplete);
-          const isCurrent = currentStep === s;
-          return (
-            <div
-              key={s}
-              className={
-                'setup-progress-rail__segment ' +
-                (isPassed
-                  ? 'setup-progress-rail__segment--done'
-                  : isCurrent
-                  ? 'setup-progress-rail__segment--active'
-                  : 'setup-progress-rail__segment--pending')
-              }
-            />
-          );
-        })}
-      </div>
-
-      {/* â”€â”€ Main instruction â”€â”€ */}
-      <div>
-        <div
-          className="setup-step-title"
-          style={{
-            fontFamily: 'var(--font-display)',
-            fontSize: '1.3rem',
-            fontWeight: 600,
-            color: 'var(--ink-text)',
-            marginBottom: '0.4rem',
-            lineHeight: 1.3,
-          }}
-        >
-          {step.title}
-        </div>
-        <p
-          style={{
-            fontFamily: 'var(--font-display)',
-            fontSize: '0.95rem',
-            lineHeight: 1.55,
-            color: 'var(--ink-text)',
-            margin: 0,
-          }}
-        >
-          {step.instruction}
-        </p>
-      </div>
-
-      {/* â”€â”€ Focused metric callout (single metric per step) â”€â”€ */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          padding: '1rem 1.25rem',
-          backgroundColor: 'var(--ink-bg)',
-          border: `1px solid ${step.isAccepted ? 'rgba(79,216,196,0.3)' : 'var(--ink-border)'}`,
-          borderLeft: `3px solid ${step.isAccepted || acceptedFlash ? 'var(--signal-good)' : 'var(--ink-border)'}`,
-          borderRadius: '2px',
-          transition: 'border-color 0.2s ease',
-          flexWrap: 'wrap',
-          gap: '1rem',
-        }}
-      >
-        <div className="metric-callout">
-          <div className="metric-callout__label">{step.metricLabel}</div>
-          <div
-            className={
-              'metric-callout__value ' +
-              (step.isAccepted || acceptedFlash
-                ? 'metric-callout__value--good'
-                : step.metricValue === 'SEARCHING...' || step.metricValue === 'DEVIATED'
-                ? 'metric-callout__value--alert'
-                : 'metric-callout__value--muted')
-            }
-            aria-live="polite"
-            aria-atomic="true"
-          >
-            {step.metricValue}
-          </div>
-          <div className="metric-callout__limit">{step.metricLimit}</div>
-        </div>
-
-        {/* Status chip */}
-        <div style={{ marginLeft: 'auto' }}>
-          {acceptedFlash ? (
-            <span className="step-accepted-flash" role="status">
-              &#10003; {acceptedFlash}
-            </span>
-          ) : (
-            <span
-              style={{
-                fontFamily: 'var(--font-mono)',
-                fontSize: '0.72rem',
-                fontWeight: 600,
-                letterSpacing: '0.05em',
-                color: step.isAccepted ? 'var(--signal-good)' : 'var(--ink-muted)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.4rem',
-              }}
-              role="status"
-            >
-              <span
-                style={{
-                  width: '5px',
-                  height: '5px',
-                  borderRadius: '50%',
-                  backgroundColor: step.isAccepted ? 'var(--signal-good)' : 'var(--ink-border)',
-                  display: 'inline-block',
-                  flexShrink: 0,
-                }}
-                aria-hidden="true"
-              />
-              {step.isAccepted ? 'ACCEPTED' : 'REQUIRED'}
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* â”€â”€ Step 5: Hold progress bar â”€â”€ */}
-      {currentStep === 5 && (
-        <div
-          style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}
-          role="timer"
-          aria-label={`Hold progress: ${(holdProgressMs / 1000).toFixed(1)} of 3.0 seconds`}
-        >
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              fontFamily: 'var(--font-mono)',
-              fontSize: '0.72rem',
-              color: 'var(--ink-muted)',
-            }}
-          >
-            <span>HOLDING POSTURE</span>
-            <span style={{ color: isHoldComplete ? 'var(--signal-good)' : 'var(--ink-text)', fontWeight: 600 }}>
-              {(holdProgressMs / 1000).toFixed(1)} / 3.0 s
-            </span>
-          </div>
-          <div
-            style={{
-              width: '100%',
-              height: '6px',
-              backgroundColor: 'var(--ink-panel)',
-              border: '1px solid var(--ink-border)',
-              borderRadius: '2px',
-              overflow: 'hidden',
-            }}
-          >
-            <div
-              style={{
-                width: `${(holdProgressMs / REQUIRED_HOLD_MS) * 100}%`,
-                height: '100%',
-                backgroundColor: isHoldComplete ? 'var(--signal-good)' : 'var(--ink-text)',
-                transition: 'width 0.05s linear, background-color 0.25s ease',
-              }}
-            />
-          </div>
-        </div>
-      )}
-
-      {/* â”€â”€ Guidance line â”€â”€ */}
-      <div
-        style={{
-          fontFamily: 'var(--font-mono)',
-          fontSize: '0.72rem',
-          lineHeight: 1.5,
-          color: step.isAccepted ? 'var(--signal-good)' : 'var(--ink-muted)',
-          display: 'flex',
-          alignItems: 'flex-start',
-          gap: '0.5rem',
-        }}
-        role="status"
-        aria-live="polite"
-      >
-        <span style={{ flexShrink: 0 }}>// GUIDANCE :</span>
-        <span>{step.guidance}</span>
-      </div>
-
-      {/* â”€â”€ COMPLETION STATE (Step 5 hold complete) â”€â”€ */}
-      {isHoldComplete && (
-        <div
-          style={{
-            borderTop: '1px solid var(--ink-border)',
-            paddingTop: '1.25rem',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '1.25rem',
-          }}
-          role="region"
-          aria-label="Posture verified. Ready to launch demo workspace."
-        >
-          {/* Verified headline */}
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.4rem' }}>
-              <span
-                style={{
-                  width: '6px',
-                  height: '6px',
-                  backgroundColor: 'var(--signal-good)',
-                  display: 'inline-block',
-                  flexShrink: 0,
-                }}
-                aria-hidden="true"
-              />
-              <span
-                style={{
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: '0.72rem',
-                  fontWeight: 700,
-                  letterSpacing: '0.08em',
-                  color: 'var(--signal-good)',
-                }}
-              >
-                POSTURE VERIFIED
-              </span>
-            </div>
-            <p
-              style={{
-                fontFamily: 'var(--font-display)',
-                fontSize: '0.875rem',
-                color: 'var(--ink-muted)',
-                lineHeight: 1.5,
-                margin: 0,
-              }}
-            >
-              Reference posture satisfied. Background monitoring is now active.
-            </p>
-          </div>
-
-          {/* Two-tab architecture diagram */}
-          <div
-            className="two-tab-diagram"
-            aria-label="Tab layout: Tab 01 Monitor stays active, Tab 02 Workspace opens"
-          >
-            <div className="tab-box tab-box--active">
-              <div className="tab-box__label">TAB 01</div>
-              <div className="tab-box__name">MONITOR</div>
-              <div className="tab-box__status">&#9679; STAYS ACTIVE</div>
-            </div>
-            <div className="tab-arrow" aria-hidden="true">
-              <div>&#8596;</div>
-              <div style={{ fontSize: '0.6rem', marginTop: '2px', color: 'var(--ink-border)' }}>BC</div>
-            </div>
-            <div className="tab-box">
-              <div className="tab-box__label">TAB 02</div>
-              <div className="tab-box__name">WORKSPACE</div>
-              <div
-                style={{
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: '0.65rem',
-                  color: 'var(--ink-muted)',
-                  marginTop: '0.2rem',
-                }}
-              >
-                OPENS NOW &#8599;
-              </div>
-            </div>
-          </div>
-
-          {/* Launch button */}
-          <button
-            id="btn-launch-demo-completed"
-            className="btn btn-primary"
-            onClick={onComplete}
-            style={{
-              width: '100%',
-              padding: '0.75rem 1.25rem',
-              fontFamily: 'var(--font-display)',
-              fontSize: '0.9rem',
-              letterSpacing: '0.02em',
-            }}
-            aria-label="Launch Demo Workspace in a new tab"
-          >
-            Launch Demo Workspace &#8599;
-          </button>
-        </div>
-      )}
-    </div>
-  );
-};
-</file>
-
-<file path="src/lib/mediapipe/visionPipeline.ts">
-import {
-  FilesetResolver,
-  PoseLandmarker,
-  FaceLandmarker,
-  type PoseLandmarkerResult,
-  type FaceLandmarkerResult,
-  type NormalizedLandmark
-} from '@mediapipe/tasks-vision';
-
-export interface VisionPipelineResults {
-  poseResult: PoseLandmarkerResult | null;
-  faceResult: FaceLandmarkerResult | null;
-  timestampMs: number;
-}
-
-export interface VisionPipelineStatus {
-  isReady: boolean;
-  isLoading: boolean;
-  error: string | null;
-  poseDetected: boolean;
-  faceDetected: boolean;
-  poseLandmarksCount: number;
-  faceLandmarksCount: number;
-  fps: number;
-}
-
-const WASM_CDN_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm';
-const POSE_MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
-const FACE_MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
-
-let poseLandmarkerInstance: PoseLandmarker | null = null;
-let faceLandmarkerInstance: FaceLandmarker | null = null;
-let initPromise: Promise<{ poseLandmarker: PoseLandmarker; faceLandmarker: FaceLandmarker }> | null = null;
-
-/**
- * Initializes MediaPipe Tasks Vision FilesetResolver, PoseLandmarker, and FaceLandmarker.
- * Reuses active instances to prevent double initialization during React StrictMode.
- */
-export async function initializeMediaPipe(): Promise<{
-  poseLandmarker: PoseLandmarker;
-  faceLandmarker: FaceLandmarker;
-}> {
-  if (poseLandmarkerInstance && faceLandmarkerInstance) {
-    return {
-      poseLandmarker: poseLandmarkerInstance,
-      faceLandmarker: faceLandmarkerInstance
-    };
-  }
-
-  if (initPromise) {
-    return initPromise;
-  }
-
-  initPromise = (async () => {
-    try {
-      const vision = await FilesetResolver.forVisionTasks(WASM_CDN_URL);
-
-      const [poseLandmarker, faceLandmarker] = await Promise.all([
-        PoseLandmarker.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: POSE_MODEL_URL,
-            delegate: 'GPU'
-          },
-          runningMode: 'VIDEO',
-          numPoses: 1,
-          minPoseDetectionConfidence: 0.5,
-          minPosePresenceConfidence: 0.5,
-          minTrackingConfidence: 0.5
-        }),
-        FaceLandmarker.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: FACE_MODEL_URL,
-            delegate: 'GPU'
-          },
-          runningMode: 'VIDEO',
-          numFaces: 1,
-          minFaceDetectionConfidence: 0.5,
-          minFacePresenceConfidence: 0.5,
-          minTrackingConfidence: 0.5,
-          outputFaceBlendshapes: true
-        })
-      ]);
-
-      poseLandmarkerInstance = poseLandmarker;
-      faceLandmarkerInstance = faceLandmarker;
-
-      return { poseLandmarker, faceLandmarker };
-    } catch (err) {
-      initPromise = null;
-      throw err;
-    }
-  })();
-
-  return initPromise;
-}
-
-/**
- * Executes a single synchronized video frame inference for both Pose & Face landmarkers.
- */
-export function detectLandmarksForVideo(
-  video: HTMLVideoElement,
-  timestampMs: number
-): VisionPipelineResults | null {
-  if (!poseLandmarkerInstance || !faceLandmarkerInstance) {
-    return null;
-  }
-
-  if (video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
-    return null;
-  }
-
-  try {
-    const poseResult = poseLandmarkerInstance.detectForVideo(video, timestampMs);
-    const faceResult = faceLandmarkerInstance.detectForVideo(video, timestampMs);
-
-    return {
-      poseResult,
-      faceResult,
-      timestampMs
-    };
-  } catch (err) {
-    console.error('Inference error during frame processing:', err);
-    return null;
-  }
-}
-
-/**
- * Standard Pose keypoint connections for developer skeleton overlay.
- */
-export const POSE_CONNECTIONS: [number, number][] = [
-  // Torso & Shoulders
-  [11, 12], // left shoulder to right shoulder
-  [11, 23], // left shoulder to left hip
-  [12, 24], // right shoulder to right hip
-  [23, 24], // left hip to right hip
-  // Left Arm
-  [11, 13], [13, 15],
-  // Right Arm
-  [12, 14], [14, 16],
-  // Head / Ears / Eyes
-  [0, 1], [1, 2], [2, 3], [3, 7], // Right eye & ear
-  [0, 4], [4, 5], [5, 6], [6, 8], // Left eye & ear
-  [9, 10] // Mouth
-];
-
-/**
- * Helper to render pose & face landmark points and connections onto a target 2D canvas context.
- */
-export function drawLandmarksOnCanvas(
-  ctx: CanvasRenderingContext2D,
-  width: number,
-  height: number,
-  poseLandmarks?: NormalizedLandmark[],
-  faceLandmarks?: NormalizedLandmark[]
-): void {
-  ctx.clearRect(0, 0, width, height);
-
-  // 1. Render Pose Skeleton
-  if (poseLandmarks && poseLandmarks.length > 0) {
-    // Draw connections
-    ctx.strokeStyle = '#38bdf8'; // Sky blue
-    ctx.lineWidth = 2.5;
-
-    for (const [startIdx, endIdx] of POSE_CONNECTIONS) {
-      const p1 = poseLandmarks[startIdx];
-      const p2 = poseLandmarks[endIdx];
-      if (p1 && p2 && (p1.visibility ?? 1) > 0.4 && (p2.visibility ?? 1) > 0.4) {
-        ctx.beginPath();
-        ctx.moveTo(p1.x * width, p1.y * height);
-        ctx.lineTo(p2.x * width, p2.y * height);
-        ctx.stroke();
-      }
-    }
-
-    // Draw landmark keypoint dots
-    for (const lm of poseLandmarks) {
-      if ((lm.visibility ?? 1) > 0.4) {
-        ctx.beginPath();
-        ctx.arc(lm.x * width, lm.y * height, 4, 0, 2 * Math.PI);
-        ctx.fillStyle = '#10b981'; // Emerald
-        ctx.fill();
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1.2;
-        ctx.stroke();
-      }
-    }
-  }
-
-  // 2. Render Face Mesh / Key Points (subtle, lightweight developer dots)
-  if (faceLandmarks && faceLandmarks.length > 0) {
-    // Render key facial contour dots
-    ctx.fillStyle = 'rgba(244, 63, 94, 0.75)'; // Coral rose
-    // Draw subsampled face mesh landmarks for smooth real-time performance
-    const step = 4; // Sample every 4th landmark for clean debug view
-    for (let i = 0; i < faceLandmarks.length; i += step) {
-      const lm = faceLandmarks[i];
-      ctx.beginPath();
-      ctx.arc(lm.x * width, lm.y * height, 1.8, 0, 2 * Math.PI);
-      ctx.fill();
-    }
-  }
-}
 </file>
 
 <file path="src/lib/posture/geometry.ts">
@@ -2601,311 +2397,945 @@ export default defineConfig({
 })
 </file>
 
-<file path="src/lib/hooks/useVisionFeed.ts">
-import { useEffect, useRef, useState } from 'react';
-import {
-  initializeMediaPipe,
-  detectLandmarksForVideo,
-  drawLandmarksOnCanvas
-} from '../mediapipe/visionPipeline';
-import { computePostureMetrics, type PostureMetrics } from '../posture/postureMetrics';
-import { classifyPosture, type PostureClassification } from '../posture/postureClassifier';
-import { PostureMetricsSmoother } from '../posture/smoother';
+<file path="src/components/PostureInstructions.tsx">
+import React, { useEffect, useRef, useState } from 'react';
+import type { PostureMetrics } from '../lib/posture/postureMetrics';
+import { POSTURE_THRESHOLDS } from '../lib/posture/postureClassifier';
 
-export interface UseVisionFeedOptions {
-  active?: boolean;
-  smoothingWeight?: number;
-}
-
-export interface UseVisionFeedResult {
-  videoRef: React.RefObject<HTMLVideoElement | null>;
-  canvasRef: React.RefObject<HTMLCanvasElement | null>;
-  cameraActive: boolean;
-  cameraError: string | null;
-  pipelineReady: boolean;
-  pipelineLoading: boolean;
-  pipelineError: string | null;
-  poseDetected: boolean;
-  measuredFps: number;
+export interface PostureInstructionsProps {
   postureMetrics: PostureMetrics | null;
-  postureClassification: PostureClassification;
+  onComplete: () => void;
+  onDismiss?: () => void;
+  isOverlay?: boolean;
 }
 
-export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeedResult {
-  const { active = true, smoothingWeight = 0.35 } = options;
+export type SetupStep = 1 | 2 | 3 | 4 | 5;
 
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const animFrameIdRef = useRef<number | null>(null);
-  const isProcessingRef = useRef<boolean>(false);
-  const lastTimestampMsRef = useRef<number>(0);
-  const lastProcessTimeRef = useRef<number>(0);
-  const fpsTimerRef = useRef<{ frames: number; lastTime: number }>({ frames: 0, lastTime: performance.now() });
-  const smootherRef = useRef<PostureMetricsSmoother>(new PostureMetricsSmoother(smoothingWeight));
+export const PostureInstructions: React.FC<PostureInstructionsProps> = ({
+  postureMetrics,
+  onComplete,
+  onDismiss,
+}) => {
+  const [currentStep, setCurrentStep] = useState<SetupStep>(1);
+  // Flash message shown briefly after a step is accepted before advancing
+  const [acceptedFlash, setAcceptedFlash] = useState<string | null>(null);
 
-  const [cameraActive, setCameraActive] = useState<boolean>(false);
-  const [cameraError, setCameraError] = useState<string | null>(null);
-  const [pipelineReady, setPipelineReady] = useState<boolean>(false);
-  const [pipelineLoading, setPipelineLoading] = useState<boolean>(true);
-  const [pipelineError, setPipelineError] = useState<string | null>(null);
+  // Step 5 Hold timer state (ms)
+  const REQUIRED_HOLD_MS = 3000;
+  const [holdProgressMs, setHoldProgressMs] = useState<number>(0);
+  const holdStartTimestampRef = useRef<number | null>(null);
 
-  const [poseDetected, setPoseDetected] = useState<boolean>(false);
-  const [measuredFps, setMeasuredFps] = useState<number>(0);
-  const [postureMetrics, setPostureMetrics] = useState<PostureMetrics | null>(null);
-  const [postureClassification, setPostureClassification] = useState<PostureClassification>({
-    status: 'insufficient_data',
-    severity: 0,
-    deviationScore: 0,
-    reason: 'Initializing vision pipeline...'
-  });
+  // ---------------------------------------------------------------------------
+  // Condition checks corresponding to the fixed ergonomic thresholds
+  // ---------------------------------------------------------------------------
+  const isStep1Valid = Boolean(
+    postureMetrics?.isValid &&
+    (postureMetrics?.confidence ?? 0) >= POSTURE_THRESHOLDS.MIN_CONFIDENCE
+  );
 
-  // 1. Initialize MediaPipe Models
+  const isStep2Valid = Boolean(
+    isStep1Valid &&
+    postureMetrics?.shoulderTiltDeg !== null &&
+    postureMetrics?.shoulderTiltDeg !== undefined &&
+    postureMetrics.shoulderTiltDeg < POSTURE_THRESHOLDS.SHOULDER_TILT_MILD
+  );
+
+  const isStep3Valid = Boolean(
+    isStep2Valid &&
+    postureMetrics?.lateralTiltDeg !== null &&
+    postureMetrics?.lateralTiltDeg !== undefined &&
+    postureMetrics.lateralTiltDeg < POSTURE_THRESHOLDS.LATERAL_TILT_MILD
+  );
+
+  const isStep4HeadForwardValid = Boolean(
+    postureMetrics?.headForwardOffset !== null &&
+    postureMetrics?.headForwardOffset !== undefined &&
+    postureMetrics.headForwardOffset < POSTURE_THRESHOLDS.HEAD_FORWARD_MILD
+  );
+
+  const isStep4HeadAngleValid = Boolean(
+    postureMetrics?.headTorsoAngleDeg !== null &&
+    postureMetrics?.headTorsoAngleDeg !== undefined &&
+    postureMetrics.headTorsoAngleDeg < POSTURE_THRESHOLDS.HEAD_TORSO_ANGLE_MILD
+  );
+
+  const isStep4Valid = Boolean(isStep3Valid && isStep4HeadForwardValid && isStep4HeadAngleValid);
+
+  const isAllPostureAcceptable = isStep1Valid && isStep2Valid && isStep3Valid && isStep4Valid;
+
+  // ---------------------------------------------------------------------------
+  // Automatic step progression for Steps 1 through 4 with acceptance flash
+  // ---------------------------------------------------------------------------
   useEffect(() => {
-    let isCancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
 
-    async function loadModels() {
-      try {
-        setPipelineLoading(true);
-        setPipelineError(null);
-        await initializeMediaPipe();
-        if (!isCancelled) {
-          setPipelineReady(true);
-          setPipelineLoading(false);
-        }
-      } catch (err: unknown) {
-        if (!isCancelled) {
-          console.error('MediaPipe initialization error:', err);
-          const errorMsg = err instanceof Error ? err.message : 'Failed to initialize MediaPipe vision models';
-          setPipelineError(errorMsg);
-          setPipelineLoading(false);
-        }
-      }
+    if (currentStep === 1 && isStep1Valid) {
+      setAcceptedFlash('FRAME LOCKED');
+      timer = setTimeout(() => {
+        setAcceptedFlash(null);
+        setCurrentStep(2);
+      }, 700);
+    } else if (currentStep === 2 && isStep2Valid) {
+      setAcceptedFlash('SHOULDER ALIGNMENT ACCEPTED');
+      timer = setTimeout(() => {
+        setAcceptedFlash(null);
+        setCurrentStep(3);
+      }, 700);
+    } else if (currentStep === 3 && isStep3Valid) {
+      setAcceptedFlash('TORSO ALIGNMENT ACCEPTED');
+      timer = setTimeout(() => {
+        setAcceptedFlash(null);
+        setCurrentStep(4);
+      }, 700);
+    } else if (currentStep === 4 && isStep4Valid) {
+      setAcceptedFlash('HEAD ALIGNMENT ACCEPTED');
+      timer = setTimeout(() => {
+        setAcceptedFlash(null);
+        setCurrentStep(5);
+      }, 700);
     }
 
-    loadModels();
-
     return () => {
-      isCancelled = true;
+      if (timer) clearTimeout(timer);
     };
-  }, []);
+  }, [currentStep, isStep1Valid, isStep2Valid, isStep3Valid, isStep4Valid]);
 
-  // 2. Start Live Webcam Feed
+  // ---------------------------------------------------------------------------
+  // Step 5 Hold Timer Management
+  // ---------------------------------------------------------------------------
   useEffect(() => {
-    if (!active) {
-      setCameraActive(false);
+    if (currentStep !== 5) {
+      setHoldProgressMs(0);
+      holdStartTimestampRef.current = null;
       return;
     }
 
-    let stream: MediaStream | null = null;
-    let isMounted = true;
+    if (holdProgressMs >= REQUIRED_HOLD_MS) return;
 
-    async function startWebcam() {
-      try {
-        setCameraError(null);
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-            facingMode: 'user'
-          },
-          audio: false
-        });
+    let animFrame: number;
 
-        if (isMounted && videoRef.current) {
-          videoRef.current.srcObject = stream;
-          setCameraActive(true);
-        }
-      } catch (err: unknown) {
-        if (isMounted) {
-          console.error('Error accessing webcam:', err);
-          const errorMsg = err instanceof Error ? err.message : 'Camera permission denied or camera unavailable';
-          setCameraError(errorMsg);
-          setCameraActive(false);
-        }
-      }
-    }
-
-    startWebcam();
-
-    return () => {
-      isMounted = false;
-      if (stream) {
-        stream.getTracks().forEach((track) => track.stop());
-      }
-    };
-  }, [active]);
-
-  // 3. Robust Inference, Math & Render Loop with Background Tab Support
-  useEffect(() => {
-    if (!active || !pipelineReady || !cameraActive) {
-      return;
-    }
-
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    if (!video) return;
-
-    let isRunning = true;
-
-    // Core single-frame processor (can be called by either requestAnimationFrame or Worker ticker)
-    function executeInference() {
-      if (!isRunning) return;
-
-      const now = performance.now();
-      // Throttle slightly to max ~30-40 FPS to avoid redundant cycles
-      if (now - lastProcessTimeRef.current < 25) {
+    const tick = () => {
+      if (!isAllPostureAcceptable) {
+        holdStartTimestampRef.current = null;
+        setHoldProgressMs(0);
+        animFrame = requestAnimationFrame(tick);
         return;
       }
 
-      if (!isProcessingRef.current && video && video.readyState >= 2 && video.videoWidth > 0) {
-        isProcessingRef.current = true;
-        lastProcessTimeRef.current = now;
-
-        const currentTimestampMs = performance.now();
-        const adjustedTimestampMs =
-          currentTimestampMs > lastTimestampMsRef.current ? currentTimestampMs : lastTimestampMsRef.current + 1;
-        lastTimestampMsRef.current = adjustedTimestampMs;
-
-        if (canvas && (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight)) {
-          canvas.width = video.videoWidth;
-          canvas.height = video.videoHeight;
-        }
-
-        const results = detectLandmarksForVideo(video, adjustedTimestampMs);
-
-        if (results) {
-          const poseLandmarks = results.poseResult?.landmarks?.[0];
-          const faceLandmarks = results.faceResult?.faceLandmarks?.[0];
-
-          // Only draw to canvas if canvas is present and document is not fully hidden (or for debugging)
-          if (canvas) {
-            const ctx = canvas.getContext('2d');
-            if (ctx) {
-              drawLandmarksOnCanvas(ctx, canvas.width, canvas.height, poseLandmarks, faceLandmarks);
-            }
-          }
-
-          const isPosePresent = Boolean(poseLandmarks && poseLandmarks.length > 0);
-          setPoseDetected(isPosePresent);
-
-          if (isPosePresent && poseLandmarks) {
-            const rawMetrics = computePostureMetrics(poseLandmarks);
-            const smoothedMetrics = smootherRef.current.smooth(rawMetrics);
-            const classification = classifyPosture(smoothedMetrics);
-
-            setPostureMetrics(smoothedMetrics);
-            setPostureClassification(classification);
-          } else {
-            smootherRef.current.reset();
-            setPostureMetrics(null);
-            setPostureClassification({
-              status: 'insufficient_data',
-              severity: 0,
-              deviationScore: 0,
-              reason: 'No person detected in camera frame'
-            });
-          }
-        }
-
-        fpsTimerRef.current.frames += 1;
-        if (now - fpsTimerRef.current.lastTime >= 1000) {
-          setMeasuredFps(Math.round((fpsTimerRef.current.frames * 1000) / (now - fpsTimerRef.current.lastTime)));
-          fpsTimerRef.current.frames = 0;
-          fpsTimerRef.current.lastTime = now;
-        }
-
-        isProcessingRef.current = false;
+      const now = performance.now();
+      if (holdStartTimestampRef.current === null) {
+        holdStartTimestampRef.current = now;
       }
-    }
 
-    // Animation frame pump for smooth 60fps rendering while tab is active
-    function onAnimationFrame() {
-      if (!isRunning) return;
-      executeInference();
-      animFrameIdRef.current = requestAnimationFrame(onAnimationFrame);
-    }
+      const elapsed = Math.min(REQUIRED_HOLD_MS, now - holdStartTimestampRef.current);
+      setHoldProgressMs(elapsed);
 
-    animFrameIdRef.current = requestAnimationFrame(onAnimationFrame);
-
-    // Background Tab Ticker:
-    // When the user switches to the secondary Demo tab, browsers throttle requestAnimationFrame to 0 or 1 FPS.
-    // A dedicated Web Worker timer continues firing every ~50ms uninterrupted in the background.
-    let backgroundWorker: Worker | null = null;
-    try {
-      const workerCode = `
-        let timer = null;
-        self.onmessage = function(e) {
-          if (e.data === 'start') {
-            if (!timer) {
-              timer = setInterval(function() {
-                self.postMessage('tick');
-              }, 50); // ~20 FPS in background
-            }
-          } else if (e.data === 'stop') {
-            if (timer) {
-              clearInterval(timer);
-              timer = null;
-            }
-          }
-        };
-      `;
-      const blob = new Blob([workerCode], { type: 'application/javascript' });
-      const workerUrl = URL.createObjectURL(blob);
-      backgroundWorker = new Worker(workerUrl);
-      backgroundWorker.onmessage = () => {
-        executeInference();
-      };
-      backgroundWorker.postMessage('start');
-      URL.revokeObjectURL(workerUrl);
-    } catch (err) {
-      console.warn('Could not start Web Worker background timer, falling back to interval:', err);
-      // Fallback interval if Worker creation fails
-      const fallbackInterval = setInterval(() => {
-        executeInference();
-      }, 80);
-      return () => {
-        isRunning = false;
-        clearInterval(fallbackInterval);
-        if (animFrameIdRef.current !== null) {
-          cancelAnimationFrame(animFrameIdRef.current);
-          animFrameIdRef.current = null;
-        }
-      };
-    }
-
-    return () => {
-      isRunning = false;
-      if (animFrameIdRef.current !== null) {
-        cancelAnimationFrame(animFrameIdRef.current);
-        animFrameIdRef.current = null;
-      }
-      if (backgroundWorker) {
-        backgroundWorker.postMessage('stop');
-        backgroundWorker.terminate();
-        backgroundWorker = null;
-      }
-      if (canvas) {
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
-        }
+      if (elapsed < REQUIRED_HOLD_MS) {
+        animFrame = requestAnimationFrame(tick);
       }
     };
-  }, [active, pipelineReady, cameraActive]);
 
-  return {
-    videoRef,
-    canvasRef,
-    cameraActive,
-    cameraError,
-    pipelineReady,
-    pipelineLoading,
-    pipelineError,
-    poseDetected,
-    measuredFps,
-    postureMetrics,
-    postureClassification
+    animFrame = requestAnimationFrame(tick);
+
+    return () => {
+      cancelAnimationFrame(animFrame);
+    };
+  }, [currentStep, isAllPostureAcceptable, holdProgressMs]);
+
+  const handleRestart = () => {
+    setCurrentStep(1);
+    setAcceptedFlash(null);
+    setHoldProgressMs(0);
+    holdStartTimestampRef.current = null;
   };
+
+  const isHoldComplete = currentStep === 5 && holdProgressMs >= REQUIRED_HOLD_MS;
+
+  // ---------------------------------------------------------------------------
+  // Per-step content: instruction + the ONE relevant metric to show
+  // ---------------------------------------------------------------------------
+  type StepContent = {
+    title: string;
+    instruction: string;
+    guidance: string;
+    metricLabel: string;
+    metricValue: string;
+    metricLimit: string;
+    isAccepted: boolean;
+  };
+
+  const getStepContent = (): StepContent => {
+    switch (currentStep) {
+      case 1:
+        return {
+          title: 'FRAME YOURSELF',
+          instruction: 'Position yourself in the camera frame.',
+          guidance: 'Move back until your head, shoulders and upper torso are clearly visible.',
+          metricLabel: 'PERSON DETECTION',
+          metricValue: isStep1Valid ? 'PRESENT' : 'SEARCHING...',
+          metricLimit: 'Visible head + shoulders required',
+          isAccepted: isStep1Valid,
+        };
+      case 2:
+        return {
+          title: 'LEVEL YOUR SHOULDERS',
+          instruction: 'Bring your shoulders to the same height.',
+          guidance: 'Raise or lower one shoulder until the shoulder line is level.',
+          metricLabel: 'SHOULDER TILT',
+          metricValue:
+            postureMetrics?.shoulderTiltDeg !== null && postureMetrics?.shoulderTiltDeg !== undefined
+              ? `${postureMetrics.shoulderTiltDeg}\u00b0`
+              : '\u2014',
+          metricLimit: `Target: < ${POSTURE_THRESHOLDS.SHOULDER_TILT_MILD}\u00b0`,
+          isAccepted: isStep2Valid,
+        };
+      case 3:
+        return {
+          title: 'CENTER YOUR TORSO',
+          instruction: 'Sit upright with your torso centered.',
+          guidance: 'Bring your torso back toward the center without leaning left or right.',
+          metricLabel: 'LATERAL TILT',
+          metricValue:
+            postureMetrics?.lateralTiltDeg !== null && postureMetrics?.lateralTiltDeg !== undefined
+              ? `${postureMetrics.lateralTiltDeg}\u00b0`
+              : '\u2014',
+          metricLimit: `Target: < ${POSTURE_THRESHOLDS.LATERAL_TILT_MILD}\u00b0`,
+          isAccepted: isStep3Valid,
+        };
+      case 4:
+        return {
+          title: 'ALIGN YOUR HEAD',
+          instruction: 'Bring your head back over your shoulders.',
+          guidance: !isStep4HeadForwardValid
+            ? 'Move your head slightly back toward your shoulders.'
+            : 'Raise your chin to reduce the forward neck angle.',
+          metricLabel: 'HEAD FORWARD OFFSET',
+          metricValue:
+            postureMetrics?.headForwardOffset !== null && postureMetrics?.headForwardOffset !== undefined
+              ? `${postureMetrics.headForwardOffset}`
+              : '\u2014',
+          metricLimit: `Target: < ${POSTURE_THRESHOLDS.HEAD_FORWARD_MILD}`,
+          isAccepted: isStep4Valid,
+        };
+      case 5:
+        return {
+          title: 'HOLD POSTURE',
+          instruction: 'Maintain this position for 3 seconds.',
+          guidance: isHoldComplete
+            ? 'Posture verified. Monitoring is now active.'
+            : isAllPostureAcceptable
+            ? 'Hold steady. Verifying alignment...'
+            : !isStep1Valid
+            ? 'Return to the camera frame.'
+            : !isStep2Valid
+            ? 'Re-level your shoulders.'
+            : !isStep3Valid
+            ? 'Re-center your torso.'
+            : 'Re-align your head.',
+          metricLabel: 'HOLD PROGRESS',
+          metricValue: isHoldComplete
+            ? 'VERIFIED'
+            : isAllPostureAcceptable
+            ? `${(holdProgressMs / 1000).toFixed(1)}s`
+            : 'DEVIATED',
+          metricLimit: 'Continuous 3.0 s hold',
+          isAccepted: isHoldComplete,
+        };
+    }
+  };
+
+  const step = getStepContent();
+
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
+  return (
+    <div
+      className="glass-panel"
+      style={{
+        padding: '1.75rem',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '1.25rem',
+      }}
+    >
+      {/* â”€â”€ Top header row â”€â”€ */}
+      <div
+        className="panel-header"
+        style={{ margin: 0, paddingBottom: '0.75rem' }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+          <span
+            style={{
+              width: '6px',
+              height: '6px',
+              backgroundColor: isHoldComplete ? 'var(--signal-good)' : 'var(--ink-muted)',
+              display: 'inline-block',
+              flexShrink: 0,
+            }}
+            aria-hidden="true"
+          />
+          <span
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.72rem',
+              letterSpacing: '0.08em',
+              color: 'var(--ink-muted)',
+              fontWeight: 500,
+            }}
+          >
+            POSTURE SETUP
+          </span>
+          <span
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.72rem',
+              letterSpacing: '0.08em',
+              color: 'var(--ink-text)',
+              fontWeight: 600,
+            }}
+          >
+            // STEP 0{currentStep} / 05
+          </span>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <button
+            onClick={handleRestart}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.7rem',
+              color: 'var(--ink-muted)',
+              cursor: 'pointer',
+              padding: '2px 6px',
+              letterSpacing: '0.04em',
+            }}
+            title="Restart posture setup from Step 1"
+            aria-label="Restart posture setup"
+          >
+            [ RESTART ]
+          </button>
+
+          {onDismiss && (
+            <button
+              onClick={onDismiss}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                fontFamily: 'var(--font-mono)',
+                fontSize: '0.7rem',
+                color: 'var(--ink-muted)',
+                cursor: 'pointer',
+                padding: '2px 6px',
+                letterSpacing: '0.04em',
+              }}
+              title="Dismiss setup guide"
+              aria-label="Dismiss setup guide"
+            >
+              [ SKIP ]
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* â”€â”€ Progress rail â”€â”€ */}
+      <div
+        className="setup-progress-rail"
+        style={{ gridTemplateColumns: `repeat(5, 1fr)` }}
+        role="progressbar"
+        aria-valuenow={currentStep}
+        aria-valuemin={1}
+        aria-valuemax={5}
+        aria-label={`Setup step ${currentStep} of 5`}
+      >
+        {([1, 2, 3, 4, 5] as SetupStep[]).map((s) => {
+          const isPassed = currentStep > s || (s === 5 && isHoldComplete);
+          const isCurrent = currentStep === s;
+          return (
+            <div
+              key={s}
+              className={
+                'setup-progress-rail__segment ' +
+                (isPassed
+                  ? 'setup-progress-rail__segment--done'
+                  : isCurrent
+                  ? 'setup-progress-rail__segment--active'
+                  : 'setup-progress-rail__segment--pending')
+              }
+            />
+          );
+        })}
+      </div>
+
+      {/* â”€â”€ Main instruction â”€â”€ */}
+      <div>
+        <div
+          className="setup-step-title"
+          style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: '1.3rem',
+            fontWeight: 600,
+            color: 'var(--ink-text)',
+            marginBottom: '0.4rem',
+            lineHeight: 1.3,
+          }}
+        >
+          {step.title}
+        </div>
+        <p
+          style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: '0.95rem',
+            lineHeight: 1.55,
+            color: 'var(--ink-text)',
+            margin: 0,
+          }}
+        >
+          {step.instruction}
+        </p>
+      </div>
+
+      {/* â”€â”€ Focused metric callout (single metric per step) â”€â”€ */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          padding: '1rem 1.25rem',
+          backgroundColor: 'var(--ink-bg)',
+          border: `1px solid ${step.isAccepted ? 'rgba(79,216,196,0.3)' : 'var(--ink-border)'}`,
+          borderLeft: `3px solid ${step.isAccepted || acceptedFlash ? 'var(--signal-good)' : 'var(--ink-border)'}`,
+          borderRadius: '2px',
+          transition: 'border-color 0.2s ease',
+          flexWrap: 'wrap',
+          gap: '1rem',
+        }}
+      >
+        <div className="metric-callout">
+          <div className="metric-callout__label">{step.metricLabel}</div>
+          <div
+            className={
+              'metric-callout__value ' +
+              (step.isAccepted || acceptedFlash
+                ? 'metric-callout__value--good'
+                : step.metricValue === 'SEARCHING...' || step.metricValue === 'DEVIATED'
+                ? 'metric-callout__value--alert'
+                : 'metric-callout__value--muted')
+            }
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            {step.metricValue}
+          </div>
+          <div className="metric-callout__limit">{step.metricLimit}</div>
+        </div>
+
+        {/* Status chip */}
+        <div style={{ marginLeft: 'auto' }}>
+          {acceptedFlash ? (
+            <span className="step-accepted-flash" role="status">
+              &#10003; {acceptedFlash}
+            </span>
+          ) : (
+            <span
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: '0.72rem',
+                fontWeight: 600,
+                letterSpacing: '0.05em',
+                color: step.isAccepted ? 'var(--signal-good)' : 'var(--ink-muted)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+              }}
+              role="status"
+            >
+              <span
+                style={{
+                  width: '5px',
+                  height: '5px',
+                  borderRadius: '50%',
+                  backgroundColor: step.isAccepted ? 'var(--signal-good)' : 'var(--ink-border)',
+                  display: 'inline-block',
+                  flexShrink: 0,
+                }}
+                aria-hidden="true"
+              />
+              {step.isAccepted ? 'ACCEPTED' : 'REQUIRED'}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* â”€â”€ Step 5: Hold progress bar â”€â”€ */}
+      {currentStep === 5 && (
+        <div
+          style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}
+          role="timer"
+          aria-label={`Hold progress: ${(holdProgressMs / 1000).toFixed(1)} of 3.0 seconds`}
+        >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.72rem',
+              color: 'var(--ink-muted)',
+            }}
+          >
+            <span>HOLDING POSTURE</span>
+            <span style={{ color: isHoldComplete ? 'var(--signal-good)' : 'var(--ink-text)', fontWeight: 600 }}>
+              {(holdProgressMs / 1000).toFixed(1)} / 3.0 s
+            </span>
+          </div>
+          <div
+            style={{
+              width: '100%',
+              height: '6px',
+              backgroundColor: 'var(--ink-panel)',
+              border: '1px solid var(--ink-border)',
+              borderRadius: '2px',
+              overflow: 'hidden',
+            }}
+          >
+            <div
+              style={{
+                width: `${(holdProgressMs / REQUIRED_HOLD_MS) * 100}%`,
+                height: '100%',
+                backgroundColor: isHoldComplete ? 'var(--signal-good)' : 'var(--ink-text)',
+                transition: 'width 0.05s linear, background-color 0.25s ease',
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* â”€â”€ Guidance line â”€â”€ */}
+      <div
+        style={{
+          fontFamily: 'var(--font-mono)',
+          fontSize: '0.72rem',
+          lineHeight: 1.5,
+          color: step.isAccepted ? 'var(--signal-good)' : 'var(--ink-muted)',
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: '0.5rem',
+        }}
+        role="status"
+        aria-live="polite"
+      >
+        <span style={{ flexShrink: 0 }}>// GUIDANCE :</span>
+        <span>{step.guidance}</span>
+      </div>
+
+      {/* â”€â”€ COMPLETION STATE (Step 5 hold complete) â”€â”€ */}
+      {isHoldComplete && (
+        <div
+          style={{
+            borderTop: '1px solid var(--ink-border)',
+            paddingTop: '1.25rem',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '1.25rem',
+          }}
+          role="region"
+          aria-label="Posture verified. Ready to launch demo workspace."
+        >
+          {/* Verified headline */}
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.4rem' }}>
+              <span
+                style={{
+                  width: '6px',
+                  height: '6px',
+                  backgroundColor: 'var(--signal-good)',
+                  display: 'inline-block',
+                  flexShrink: 0,
+                }}
+                aria-hidden="true"
+              />
+              <span
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '0.72rem',
+                  fontWeight: 700,
+                  letterSpacing: '0.08em',
+                  color: 'var(--signal-good)',
+                }}
+              >
+                POSTURE VERIFIED
+              </span>
+            </div>
+            <p
+              style={{
+                fontFamily: 'var(--font-display)',
+                fontSize: '0.875rem',
+                color: 'var(--ink-muted)',
+                lineHeight: 1.5,
+                margin: 0,
+              }}
+            >
+              Reference posture satisfied. Background monitoring is now active.
+            </p>
+          </div>
+
+          {/* Two-tab architecture diagram */}
+          <div
+            className="two-tab-diagram"
+            aria-label="Tab layout: Tab 01 Monitor stays active, Tab 02 Workspace opens"
+          >
+            <div className="tab-box tab-box--active">
+              <div className="tab-box__label">TAB 01</div>
+              <div className="tab-box__name">MONITOR</div>
+              <div className="tab-box__status">&#9679; STAYS ACTIVE</div>
+            </div>
+            <div className="tab-arrow" aria-hidden="true">
+              <div>&#8596;</div>
+              <div style={{ fontSize: '0.6rem', marginTop: '2px', color: 'var(--ink-border)' }}>BC</div>
+            </div>
+            <div className="tab-box">
+              <div className="tab-box__label">TAB 02</div>
+              <div className="tab-box__name">WORKSPACE</div>
+              <div
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '0.65rem',
+                  color: 'var(--ink-muted)',
+                  marginTop: '0.2rem',
+                }}
+              >
+                OPENS NOW &#8599;
+              </div>
+            </div>
+          </div>
+
+          {/* Launch button */}
+          <button
+            id="btn-launch-demo-completed"
+            className="btn btn-primary"
+            onClick={onComplete}
+            style={{
+              width: '100%',
+              padding: '0.75rem 1.25rem',
+              fontFamily: 'var(--font-display)',
+              fontSize: '0.9rem',
+              letterSpacing: '0.02em',
+            }}
+            aria-label="Launch Demo Workspace in a new tab"
+          >
+            Launch Demo Workspace &#8599;
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+</file>
+
+<file path="src/lib/mediapipe/visionPipeline.ts">
+import {
+  FilesetResolver,
+  PoseLandmarker,
+  FaceLandmarker,
+  FaceDetector,
+  type PoseLandmarkerResult,
+  type FaceLandmarkerResult,
+  type FaceDetectorResult,
+  type NormalizedLandmark
+} from '@mediapipe/tasks-vision';
+
+export interface DetectedFaceBox {
+  originX: number;
+  originY: number;
+  width: number;
+  height: number;
+  confidence?: number;
+}
+
+export interface VisionPipelineResults {
+  poseResult: PoseLandmarkerResult | null;
+  faceResult: FaceLandmarkerResult | null;
+  faceDetectorResult?: FaceDetectorResult | null;
+  timestampMs: number;
+}
+
+export interface VisionPipelineStatus {
+  isReady: boolean;
+  isLoading: boolean;
+  error: string | null;
+  poseDetected: boolean;
+  faceDetected: boolean;
+  poseLandmarksCount: number;
+  faceLandmarksCount: number;
+  fps: number;
+}
+
+const WASM_CDN_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm';
+const POSE_MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
+const FACE_MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
+const FACE_DETECTOR_MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/latest/blaze_face_short_range.tflite';
+
+let poseLandmarkerInstance: PoseLandmarker | null = null;
+let faceLandmarkerInstance: FaceLandmarker | null = null;
+let faceDetectorInstance: FaceDetector | null = null;
+let initPromise: Promise<{
+  poseLandmarker: PoseLandmarker;
+  faceLandmarker: FaceLandmarker;
+  faceDetector: FaceDetector | null;
+}> | null = null;
+
+/**
+ * Initializes MediaPipe Tasks Vision FilesetResolver, PoseLandmarker, FaceLandmarker, and FaceDetector.
+ * Reuses active instances to prevent double initialization during React StrictMode.
+ */
+export async function initializeMediaPipe(): Promise<{
+  poseLandmarker: PoseLandmarker;
+  faceLandmarker: FaceLandmarker;
+  faceDetector: FaceDetector | null;
+}> {
+  if (poseLandmarkerInstance && faceLandmarkerInstance) {
+    return {
+      poseLandmarker: poseLandmarkerInstance,
+      faceLandmarker: faceLandmarkerInstance,
+      faceDetector: faceDetectorInstance
+    };
+  }
+
+  if (initPromise) {
+    return initPromise;
+  }
+
+  initPromise = (async () => {
+    try {
+      const vision = await FilesetResolver.forVisionTasks(WASM_CDN_URL);
+
+      const [poseLandmarker, faceLandmarker] = await Promise.all([
+        PoseLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: POSE_MODEL_URL,
+            delegate: 'GPU'
+          },
+          runningMode: 'VIDEO',
+          numPoses: 1,
+          minPoseDetectionConfidence: 0.5,
+          minPosePresenceConfidence: 0.5,
+          minTrackingConfidence: 0.5
+        }),
+        FaceLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: FACE_MODEL_URL,
+            delegate: 'GPU'
+          },
+          runningMode: 'VIDEO',
+          numFaces: 1,
+          minFaceDetectionConfidence: 0.5,
+          minFacePresenceConfidence: 0.5,
+          minTrackingConfidence: 0.5,
+          outputFaceBlendshapes: true
+        })
+      ]);
+
+      poseLandmarkerInstance = poseLandmarker;
+      faceLandmarkerInstance = faceLandmarker;
+
+      // Initialize FaceDetector with graceful fallback so failure doesn't crash the pipeline
+      try {
+        const faceDetector = await FaceDetector.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: FACE_DETECTOR_MODEL_URL,
+            delegate: 'GPU'
+          },
+          runningMode: 'VIDEO',
+          minDetectionConfidence: 0.5,
+          minSuppressionThreshold: 0.3
+        });
+        faceDetectorInstance = faceDetector;
+      } catch (detectorErr) {
+        console.warn('FaceDetector initialization failed, continuing without multi-person face detector:', detectorErr);
+        faceDetectorInstance = null;
+      }
+
+      return { poseLandmarker, faceLandmarker, faceDetector: faceDetectorInstance };
+    } catch (err) {
+      initPromise = null;
+      throw err;
+    }
+  })();
+
+  return initPromise;
+}
+
+/**
+ * Executes a single synchronized video frame inference for both Pose & Face landmarkers.
+ */
+export function detectLandmarksForVideo(
+  video: HTMLVideoElement,
+  timestampMs: number
+): VisionPipelineResults | null {
+  if (!poseLandmarkerInstance || !faceLandmarkerInstance) {
+    return null;
+  }
+
+  if (video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
+    return null;
+  }
+
+  try {
+    const poseResult = poseLandmarkerInstance.detectForVideo(video, timestampMs);
+    const faceResult = faceLandmarkerInstance.detectForVideo(video, timestampMs);
+
+    return {
+      poseResult,
+      faceResult,
+      timestampMs
+    };
+  } catch (err) {
+    console.error('Inference error during frame processing:', err);
+    return null;
+  }
+}
+
+/**
+ * Runs FaceDetector on a video frame to detect all visible faces.
+ * Can be called at a lower cadence (e.g. 5-10 FPS).
+ */
+export function detectFacesForVideo(
+  video: HTMLVideoElement,
+  timestampMs: number
+): FaceDetectorResult | null {
+  if (!faceDetectorInstance) {
+    return null;
+  }
+
+  if (video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
+    return null;
+  }
+
+  try {
+    return faceDetectorInstance.detectForVideo(video, timestampMs);
+  } catch (err) {
+    console.warn('FaceDetector detection error:', err);
+    return null;
+  }
+}
+
+/**
+ * Standard Pose keypoint connections for developer skeleton overlay.
+ */
+export const POSE_CONNECTIONS: [number, number][] = [
+  // Torso & Shoulders
+  [11, 12], // left shoulder to right shoulder
+  [11, 23], // left shoulder to left hip
+  [12, 24], // right shoulder to right hip
+  [23, 24], // left hip to right hip
+  // Left Arm
+  [11, 13], [13, 15],
+  // Right Arm
+  [12, 14], [14, 16],
+  // Head / Ears / Eyes
+  [0, 1], [1, 2], [2, 3], [3, 7], // Right eye & ear
+  [0, 4], [4, 5], [5, 6], [6, 8], // Left eye & ear
+  [9, 10] // Mouth
+];
+
+/**
+ * Helper to render pose & face landmark points and connections onto a target 2D canvas context.
+ */
+export function drawLandmarksOnCanvas(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  poseLandmarks?: NormalizedLandmark[],
+  faceLandmarks?: NormalizedLandmark[]
+): void {
+  ctx.clearRect(0, 0, width, height);
+
+  // 1. Render Pose Skeleton
+  if (poseLandmarks && poseLandmarks.length > 0) {
+    // Draw connections
+    ctx.strokeStyle = '#38bdf8'; // Sky blue
+    ctx.lineWidth = 2.5;
+
+    for (const [startIdx, endIdx] of POSE_CONNECTIONS) {
+      const p1 = poseLandmarks[startIdx];
+      const p2 = poseLandmarks[endIdx];
+      if (p1 && p2 && (p1.visibility ?? 1) > 0.4 && (p2.visibility ?? 1) > 0.4) {
+        ctx.beginPath();
+        ctx.moveTo(p1.x * width, p1.y * height);
+        ctx.lineTo(p2.x * width, p2.y * height);
+        ctx.stroke();
+      }
+    }
+
+    // Draw landmark keypoint dots
+    for (const lm of poseLandmarks) {
+      if ((lm.visibility ?? 1) > 0.4) {
+        ctx.beginPath();
+        ctx.arc(lm.x * width, lm.y * height, 4, 0, 2 * Math.PI);
+        ctx.fillStyle = '#10b981'; // Emerald
+        ctx.fill();
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+      }
+    }
+  }
+
+  // 2. Render Face Mesh / Key Points (subtle, lightweight developer dots)
+  if (faceLandmarks && faceLandmarks.length > 0) {
+    // Render key facial contour dots
+    ctx.fillStyle = 'rgba(244, 63, 94, 0.75)'; // Coral rose
+    // Draw subsampled face mesh landmarks for smooth real-time performance
+    const step = 4; // Sample every 4th landmark for clean debug view
+    for (let i = 0; i < faceLandmarks.length; i += step) {
+      const lm = faceLandmarks[i];
+      ctx.beginPath();
+      ctx.arc(lm.x * width, lm.y * height, 1.8, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+  }
+}
+
+/**
+ * Helper to render detected face bounding boxes and numbered markers onto target 2D canvas context.
+ * Used when personCount >= 2 for multi-person tracking.
+ */
+export function drawFaceBoxesOnCanvas(
+  ctx: CanvasRenderingContext2D,
+  _width: number,
+  _height: number,
+  faceBoxes: DetectedFaceBox[]
+): void {
+  if (!faceBoxes || faceBoxes.length === 0) return;
+
+  for (let idx = 0; idx < faceBoxes.length; idx++) {
+    const box = faceBoxes[idx];
+    const numStr = String(idx + 1).padStart(2, '0');
+
+    // Technical bounding box with corner accents
+    ctx.strokeStyle = 'rgba(79, 216, 196, 0.7)'; // teal accent
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(box.originX, box.originY, box.width, box.height);
+
+    // Numbered marker tag (e.g. 01, 02)
+    const tagWidth = 32;
+    const tagHeight = 16;
+    const tagX = box.originX;
+    const tagY = Math.max(0, box.originY - tagHeight - 2);
+
+    ctx.fillStyle = 'rgba(7, 18, 32, 0.9)';
+    ctx.fillRect(tagX, tagY, tagWidth, tagHeight);
+    ctx.strokeStyle = 'var(--signal-good, #4fd8c4)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(tagX, tagY, tagWidth, tagHeight);
+
+    ctx.fillStyle = '#4fd8c4';
+    ctx.font = 'bold 10px monospace';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(numStr, tagX + 8, tagY + tagHeight / 2);
+  }
 }
 </file>
 
@@ -3139,6 +3569,679 @@ export function classifyPosture(metrics: PostureMetrics): PostureClassification 
       reason: details || 'Forward head slouch detected'
     };
   }
+}
+</file>
+
+<file path="src/App.tsx">
+import React from 'react';
+import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
+import { Home } from './pages/Home';
+import { Dashboard } from './pages/Dashboard';
+import { Demo } from './pages/Demo';
+import { Activity, LayoutDashboard, Home as HomeIcon } from 'lucide-react';
+
+export const App: React.FC = () => {
+  return (
+    <BrowserRouter>
+      <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+        {/* Navigation Bar */}
+        <header className="top-nav">
+          <NavLink to="/" className="brand-badge">
+            <span className="nav-status-dot" aria-label="Monitoring capability available" />
+            <span>syncPosture</span>
+          </NavLink>
+
+          <nav className="nav-links">
+            <NavLink to="/" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} end>
+              <HomeIcon size={15} />
+              <span>Home</span>
+            </NavLink>
+            <NavLink to="/dashboard" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+              <Activity size={15} />
+              <span>Dashboard</span>
+            </NavLink>
+            <NavLink to="/demo" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+              <LayoutDashboard size={15} />
+              <span>Demo</span>
+            </NavLink>
+          </nav>
+        </header>
+
+        {/* Routes */}
+        <main style={{ flex: 1 }}>
+          <Routes>
+            <Route path="/" element={<Home />} />
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/demo" element={<Demo />} />
+          </Routes>
+        </main>
+      </div>
+    </BrowserRouter>
+  );
+};
+
+export default App;
+</file>
+
+<file path="src/lib/hooks/useVisionFeed.ts">
+import { useEffect, useRef, useState } from 'react';
+import {
+  initializeMediaPipe,
+  detectLandmarksForVideo,
+  detectFacesForVideo,
+  drawLandmarksOnCanvas,
+  drawFaceBoxesOnCanvas,
+  type DetectedFaceBox
+} from '../mediapipe/visionPipeline';
+import { computePostureMetrics, type PostureMetrics } from '../posture/postureMetrics';
+import { classifyPosture, type PostureClassification } from '../posture/postureClassifier';
+import { PostureMetricsSmoother } from '../posture/smoother';
+import {
+  BlinkDetector,
+  type BlinkDetectorConfig,
+  type EyeState,
+  type BlinkRateStatus,
+  type BlinkStateMachineState
+} from '../blink/blinkDetector';
+
+export type DetectionMode = 'no_person' | 'single_person' | 'multi_person';
+
+export interface UseVisionFeedOptions {
+  active?: boolean;
+  smoothingWeight?: number;
+  blinkConfig?: Partial<BlinkDetectorConfig>;
+}
+
+export interface UseVisionFeedResult {
+  videoRef: React.RefObject<HTMLVideoElement | null>;
+  canvasRef: React.RefObject<HTMLCanvasElement | null>;
+  cameraActive: boolean;
+  cameraError: string | null;
+  pipelineReady: boolean;
+  pipelineLoading: boolean;
+  pipelineError: string | null;
+  poseDetected: boolean;
+  measuredFps: number;
+  postureMetrics: PostureMetrics | null;
+  postureClassification: PostureClassification;
+  personCount: number;
+  detectionMode: DetectionMode;
+  detectedFaceBoxes: DetectedFaceBox[];
+  // Blink Detection & Rate Metrics
+  leftEAR: number;
+  rightEAR: number;
+  averageEAR: number;
+  eyesClosed: boolean;
+  eyeState: EyeState;
+  stateMachineState: BlinkStateMachineState;
+  blinkDetected: boolean;
+  blinkCount: number;
+  blinksPerMinute: number | null;
+  blinkRateStatus: BlinkRateStatus;
+  lowBlinkRate: boolean;
+  blinkTimestamps: number[];
+  observationProgress: number;
+  /** Monotonic ms timestamp of the most recently accepted blink event, or null if none yet. */
+  lastBlinkTimestampMs: number | null;
+}
+
+export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeedResult {
+  const { active = true, smoothingWeight = 0.35, blinkConfig } = options;
+
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const animFrameIdRef = useRef<number | null>(null);
+  const isProcessingRef = useRef<boolean>(false);
+  const lastTimestampMsRef = useRef<number>(0);
+  const lastProcessTimeRef = useRef<number>(0);
+  const lastFaceDetectTimeRef = useRef<number>(0);
+  const cachedFaceBoxesRef = useRef<DetectedFaceBox[]>([]);
+  const rawPersonCountsRef = useRef<number[]>([]);
+  const fpsTimerRef = useRef<{ frames: number; lastTime: number }>({ frames: 0, lastTime: performance.now() });
+  const smootherRef = useRef<PostureMetricsSmoother>(new PostureMetricsSmoother(smoothingWeight));
+  const blinkDetectorRef = useRef<BlinkDetector>(new BlinkDetector(blinkConfig));
+
+  // Timer for auto-clearing the blinkDetected flash (200ms).
+  // Stored in a ref so the inference loop can cancel it without stale closures.
+  const blinkDetectedClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Shadow refs: track previous per-frame blink values so setState is only called on actual changes.
+  // This prevents ~30 React re-renders/second from identical state updates.
+  const prevEARRef = useRef<{ left: number; right: number; avg: number }>({ left: 0, right: 0, avg: 0 });
+  const prevBlinkCountRef = useRef<number>(0);
+  const prevBlinksPerMinuteRef = useRef<number | null>(null);
+  const prevBlinkRateStatusRef = useRef<BlinkRateStatus>('collecting');
+  const prevLowBlinkRateRef = useRef<boolean>(false);
+  const prevEyesClosedRef = useRef<boolean>(false);
+  const prevEyeStateRef = useRef<EyeState>('OPEN');
+  const prevStateMachineStateRef = useRef<BlinkStateMachineState>('OPEN');
+  const prevObservationProgressRef = useRef<number>(0);
+  const prevTimestampCountRef = useRef<number>(0);
+  const prevLastBlinkTimestampRef = useRef<number | null>(null);
+
+  // Sync any changes to blinkConfig
+  useEffect(() => {
+    if (blinkConfig) {
+      blinkDetectorRef.current.updateConfig(blinkConfig);
+    }
+  }, [blinkConfig]);
+
+  const [cameraActive, setCameraActive] = useState<boolean>(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [pipelineReady, setPipelineReady] = useState<boolean>(false);
+  const [pipelineLoading, setPipelineLoading] = useState<boolean>(true);
+  const [pipelineError, setPipelineError] = useState<string | null>(null);
+
+  const [poseDetected, setPoseDetected] = useState<boolean>(false);
+  const [measuredFps, setMeasuredFps] = useState<number>(0);
+  const [postureMetrics, setPostureMetrics] = useState<PostureMetrics | null>(null);
+  const [postureClassification, setPostureClassification] = useState<PostureClassification>({
+    status: 'insufficient_data',
+    severity: 0,
+    deviationScore: 0,
+    reason: 'Initializing vision pipeline...'
+  });
+
+  // Blink detection & rate state
+  const [leftEAR, setLeftEAR] = useState<number>(0);
+  const [rightEAR, setRightEAR] = useState<number>(0);
+  const [averageEAR, setAverageEAR] = useState<number>(0);
+  const [eyesClosed, setEyesClosed] = useState<boolean>(false);
+  const [eyeState, setEyeState] = useState<EyeState>('OPEN');
+  const [stateMachineState, setStateMachineState] = useState<BlinkStateMachineState>('OPEN');
+  const [blinkDetected, setBlinkDetected] = useState<boolean>(false);
+  const [blinkCount, setBlinkCount] = useState<number>(0);
+  const [blinksPerMinute, setBlinksPerMinute] = useState<number | null>(null);
+  const [blinkRateStatus, setBlinkRateStatus] = useState<BlinkRateStatus>('collecting');
+  const [lowBlinkRate, setLowBlinkRate] = useState<boolean>(false);
+  const [blinkTimestamps, setBlinkTimestamps] = useState<number[]>([]);
+  const [observationProgress, setObservationProgress] = useState<number>(0);
+  const [lastBlinkTimestampMs, setLastBlinkTimestampMs] = useState<number | null>(null);
+
+  // Full reset when camera goes offline or vision session restarts
+  useEffect(() => {
+    if (!cameraActive) {
+      // Cancel any in-flight blinkDetected flash timer
+      if (blinkDetectedClearTimerRef.current !== null) {
+        clearTimeout(blinkDetectedClearTimerRef.current);
+        blinkDetectedClearTimerRef.current = null;
+      }
+      blinkDetectorRef.current.reset(true);
+      // Reset shadow refs so change-guards start clean
+      prevEARRef.current = { left: 0, right: 0, avg: 0 };
+      prevBlinkCountRef.current = 0;
+      prevBlinksPerMinuteRef.current = null;
+      prevBlinkRateStatusRef.current = 'collecting';
+      prevLowBlinkRateRef.current = false;
+      prevEyesClosedRef.current = false;
+      prevEyeStateRef.current = 'OPEN';
+      prevStateMachineStateRef.current = 'OPEN';
+      prevObservationProgressRef.current = 0;
+      prevTimestampCountRef.current = 0;
+      prevLastBlinkTimestampRef.current = null;
+      // Reset React state
+      setLeftEAR(0);
+      setRightEAR(0);
+      setAverageEAR(0);
+      setEyesClosed(false);
+      setEyeState('OPEN');
+      setStateMachineState('OPEN');
+      setBlinkDetected(false);
+      setBlinkCount(0);
+      setBlinksPerMinute(null);
+      setBlinkRateStatus('collecting');
+      setLowBlinkRate(false);
+      setBlinkTimestamps([]);
+      setObservationProgress(0);
+      setLastBlinkTimestampMs(null);
+    }
+  }, [cameraActive]);
+
+  // Adaptive detection mode & person count
+  const [personCount, setPersonCount] = useState<number>(0);
+  const [detectionMode, setDetectionMode] = useState<DetectionMode>('no_person');
+  const [detectedFaceBoxes, setDetectedFaceBoxes] = useState<DetectedFaceBox[]>([]);
+
+  // 1. Initialize MediaPipe Models
+  useEffect(() => {
+    let isCancelled = false;
+
+    async function loadModels() {
+      try {
+        setPipelineLoading(true);
+        setPipelineError(null);
+        await initializeMediaPipe();
+        if (!isCancelled) {
+          setPipelineReady(true);
+          setPipelineLoading(false);
+        }
+      } catch (err: unknown) {
+        if (!isCancelled) {
+          console.error('MediaPipe initialization error:', err);
+          const errorMsg = err instanceof Error ? err.message : 'Failed to initialize MediaPipe vision models';
+          setPipelineError(errorMsg);
+          setPipelineLoading(false);
+        }
+      }
+    }
+
+    loadModels();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
+  // 2. Start Live Webcam Feed
+  useEffect(() => {
+    if (!active) {
+      setCameraActive(false);
+      return;
+    }
+
+    let stream: MediaStream | null = null;
+    let isMounted = true;
+
+    async function startWebcam() {
+      try {
+        setCameraError(null);
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            facingMode: 'user'
+          },
+          audio: false
+        });
+
+        if (isMounted && videoRef.current) {
+          videoRef.current.srcObject = stream;
+          setCameraActive(true);
+        }
+      } catch (err: unknown) {
+        if (isMounted) {
+          console.error('Error accessing webcam:', err);
+          const errorMsg = err instanceof Error ? err.message : 'Camera permission denied or camera unavailable';
+          setCameraError(errorMsg);
+          setCameraActive(false);
+        }
+      }
+    }
+
+    startWebcam();
+
+    return () => {
+      isMounted = false;
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop());
+      }
+    };
+  }, [active]);
+
+  // 3. Robust Inference, Math & Render Loop with Background Tab Support
+  useEffect(() => {
+    if (!active || !pipelineReady || !cameraActive) {
+      return;
+    }
+
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video) return;
+
+    let isRunning = true;
+
+    // Core single-frame processor (can be called by either requestAnimationFrame or Worker ticker)
+    function executeInference() {
+      if (!isRunning) return;
+
+      const now = performance.now();
+      // Throttle slightly to max ~30-40 FPS to avoid redundant cycles
+      if (now - lastProcessTimeRef.current < 25) {
+        return;
+      }
+
+      if (!isProcessingRef.current && video && video.readyState >= 2 && video.videoWidth > 0) {
+        isProcessingRef.current = true;
+        lastProcessTimeRef.current = now;
+
+        const currentTimestampMs = performance.now();
+        const adjustedTimestampMs =
+          currentTimestampMs > lastTimestampMsRef.current ? currentTimestampMs : lastTimestampMsRef.current + 1;
+        lastTimestampMsRef.current = adjustedTimestampMs;
+
+        if (canvas && (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight)) {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+        }
+
+        // 1. Run Pose & Face Landmark inference (full posture rate)
+        const results = detectLandmarksForVideo(video, adjustedTimestampMs);
+
+        // 2. Run FaceDetector at lower frequency (~7-8 FPS / every ~125ms) for multi-person count
+        if (now - lastFaceDetectTimeRef.current >= 125) {
+          lastFaceDetectTimeRef.current = now;
+          const detectorResult = detectFacesForVideo(video, adjustedTimestampMs);
+
+          if (detectorResult && detectorResult.detections) {
+            const boxes: DetectedFaceBox[] = detectorResult.detections.map((det) => {
+              const bb = det.boundingBox;
+              const catScore = det.categories?.[0]?.score;
+              return {
+                originX: bb ? bb.originX : 0,
+                originY: bb ? bb.originY : 0,
+                width: bb ? bb.width : 0,
+                height: bb ? bb.height : 0,
+                confidence: catScore
+              };
+            });
+
+            cachedFaceBoxesRef.current = boxes;
+            setDetectedFaceBoxes(boxes);
+
+            // Temporal stabilization / hysteresis over a rolling window (e.g. 5 samples ~ 600ms)
+            const rawCount = boxes.length;
+            const history = rawPersonCountsRef.current;
+            history.push(rawCount);
+            if (history.length > 5) {
+              history.shift();
+            }
+
+            // Majority / stable vote across window to prevent rapid flickering
+            const countFreq = new Map<number, number>();
+            for (const c of history) {
+              countFreq.set(c, (countFreq.get(c) ?? 0) + 1);
+            }
+            let stableCount = rawCount;
+            let maxFreq = 0;
+            for (const [c, freq] of countFreq.entries()) {
+              if (freq > maxFreq) {
+                maxFreq = freq;
+                stableCount = c;
+              }
+            }
+
+            // Derive detectionMode from stableCount
+            let nextMode: DetectionMode = 'no_person';
+            if (stableCount === 1) {
+              nextMode = 'single_person';
+            } else if (stableCount >= 2) {
+              nextMode = 'multi_person';
+            }
+
+            // Update state only on change to avoid redundant React renders
+            setPersonCount((prev) => (prev !== stableCount ? stableCount : prev));
+            setDetectionMode((prev) => (prev !== nextMode ? nextMode : prev));
+          }
+        }
+
+        if (results) {
+          const poseLandmarks = results.poseResult?.landmarks?.[0];
+          const faceLandmarks = results.faceResult?.faceLandmarks?.[0];
+
+          // Determine current stable detection mode from stable count
+          const currentCount = rawPersonCountsRef.current.length > 0
+            ? rawPersonCountsRef.current[rawPersonCountsRef.current.length - 1]
+            : 0;
+          const isMultiPerson = cachedFaceBoxesRef.current.length >= 2 || currentCount >= 2;
+          const isSinglePerson = !isMultiPerson && (cachedFaceBoxesRef.current.length === 1 || currentCount === 1);
+
+          // Canvas rendering:
+          // In multi-person mode: Draw ONLY face markers (01, 02...), NO posture skeleton
+          // In single-person mode: Draw existing posture skeleton and face mesh, NO multi-person boxes
+          // In 0-person mode: Clear canvas completely
+          if (canvas) {
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              if (isMultiPerson) {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                drawFaceBoxesOnCanvas(ctx, canvas.width, canvas.height, cachedFaceBoxesRef.current);
+              } else if (isSinglePerson) {
+                drawLandmarksOnCanvas(ctx, canvas.width, canvas.height, poseLandmarks, faceLandmarks);
+              } else {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+              }
+            }
+          }
+
+          const isPosePresent = Boolean(poseLandmarks && poseLandmarks.length > 0);
+          setPoseDetected(isPosePresent && isSinglePerson);
+
+          if (isSinglePerson && isPosePresent && poseLandmarks) {
+            // Exactly one person: run posture analysis safely
+            const rawMetrics = computePostureMetrics(poseLandmarks);
+            const smoothedMetrics = smootherRef.current.smooth(rawMetrics);
+            const classification = classifyPosture(smoothedMetrics);
+
+            setPostureMetrics(smoothedMetrics);
+            setPostureClassification(classification);
+          } else {
+            // Either 0 people, or multiple people: reset smoother and classification to avoid stale telemetry
+            smootherRef.current.reset();
+            setPostureMetrics(null);
+            setPostureClassification({
+              status: 'insufficient_data',
+              severity: 0,
+              deviationScore: 0,
+              reason: isMultiPerson ? 'Multiple people detected in frame' : 'No person detected in camera frame'
+            });
+          }
+
+          // 3. Blink Detection & Rolling Rate Foundation via MediaPipe FaceLandmarker mesh
+          if (isSinglePerson && faceLandmarks) {
+            const blinkRes = blinkDetectorRef.current.update(faceLandmarks, adjustedTimestampMs);
+
+            // ---- Change-guarded setState calls ----
+            // Only call setState when the value has actually changed. This prevents ~30
+            // React re-renders per second caused by unconditional per-frame setState calls.
+
+            // EAR values: rounded to 3dp for stability
+            const newLeft  = Number(blinkRes.leftEAR.toFixed(3));
+            const newRight = Number(blinkRes.rightEAR.toFixed(3));
+            const newAvg   = Number(blinkRes.averageEAR.toFixed(3));
+            if (newLeft  !== prevEARRef.current.left)  { setLeftEAR(newLeft);   prevEARRef.current.left  = newLeft;  }
+            if (newRight !== prevEARRef.current.right) { setRightEAR(newRight); prevEARRef.current.right = newRight; }
+            if (newAvg   !== prevEARRef.current.avg)   { setAverageEAR(newAvg); prevEARRef.current.avg   = newAvg;   }
+
+            if (blinkRes.eyesClosed !== prevEyesClosedRef.current) {
+              setEyesClosed(blinkRes.eyesClosed);
+              prevEyesClosedRef.current = blinkRes.eyesClosed;
+            }
+            if (blinkRes.eyeState !== prevEyeStateRef.current) {
+              setEyeState(blinkRes.eyeState);
+              prevEyeStateRef.current = blinkRes.eyeState;
+            }
+            if (blinkRes.stateMachineState !== prevStateMachineStateRef.current) {
+              setStateMachineState(blinkRes.stateMachineState);
+              prevStateMachineStateRef.current = blinkRes.stateMachineState;
+            }
+
+            // Blink event: fire a 200ms flash, do NOT leave blinkDetected=true per-frame
+            if (blinkRes.blinkDetected) {
+              setBlinkDetected(true);
+              if (blinkDetectedClearTimerRef.current !== null) {
+                clearTimeout(blinkDetectedClearTimerRef.current);
+              }
+              blinkDetectedClearTimerRef.current = setTimeout(() => {
+                setBlinkDetected(false);
+                blinkDetectedClearTimerRef.current = null;
+              }, 200);
+            }
+
+            if (blinkRes.blinkCount !== prevBlinkCountRef.current) {
+              setBlinkCount(blinkRes.blinkCount);
+              prevBlinkCountRef.current = blinkRes.blinkCount;
+            }
+
+            if (blinkRes.blinksPerMinute !== prevBlinksPerMinuteRef.current) {
+              setBlinksPerMinute(blinkRes.blinksPerMinute);
+              prevBlinksPerMinuteRef.current = blinkRes.blinksPerMinute;
+            }
+
+            if (blinkRes.blinkRateStatus !== prevBlinkRateStatusRef.current) {
+              setBlinkRateStatus(blinkRes.blinkRateStatus);
+              prevBlinkRateStatusRef.current = blinkRes.blinkRateStatus;
+            }
+
+            if (blinkRes.lowBlinkRate !== prevLowBlinkRateRef.current) {
+              setLowBlinkRate(blinkRes.lowBlinkRate);
+              prevLowBlinkRateRef.current = blinkRes.lowBlinkRate;
+            }
+
+            // Timestamps: only update when count changes to avoid new array reference per frame
+            if (blinkRes.blinkTimestamps.length !== prevTimestampCountRef.current) {
+              setBlinkTimestamps([...blinkRes.blinkTimestamps]);
+              prevTimestampCountRef.current = blinkRes.blinkTimestamps.length;
+            }
+
+            // Observation progress: round to 2dp to halve update frequency
+            const newProgress = Math.round(blinkRes.observationProgress * 100) / 100;
+            if (newProgress !== prevObservationProgressRef.current) {
+              setObservationProgress(newProgress);
+              prevObservationProgressRef.current = newProgress;
+            }
+
+            // Last blink timestamp
+            if (blinkRes.lastBlinkTimestampMs !== prevLastBlinkTimestampRef.current) {
+              setLastBlinkTimestampMs(blinkRes.lastBlinkTimestampMs);
+              prevLastBlinkTimestampRef.current = blinkRes.lastBlinkTimestampMs;
+            }
+
+          } else {
+            // Face missing or multi-person frame: reset transient eye closure states without resetting cumulative count
+            blinkDetectorRef.current.reset(false);
+            if (prevEyesClosedRef.current)                         { setEyesClosed(false);         prevEyesClosedRef.current        = false;  }
+            if (prevEyeStateRef.current !== 'OPEN')                { setEyeState('OPEN');           prevEyeStateRef.current          = 'OPEN'; }
+            if (prevStateMachineStateRef.current !== 'OPEN')       { setStateMachineState('OPEN');  prevStateMachineStateRef.current = 'OPEN'; }
+            if (prevLowBlinkRateRef.current)                       { setLowBlinkRate(false);        prevLowBlinkRateRef.current      = false;  }
+          }
+        }
+
+        fpsTimerRef.current.frames += 1;
+        if (now - fpsTimerRef.current.lastTime >= 1000) {
+          setMeasuredFps(Math.round((fpsTimerRef.current.frames * 1000) / (now - fpsTimerRef.current.lastTime)));
+          fpsTimerRef.current.frames = 0;
+          fpsTimerRef.current.lastTime = now;
+        }
+
+        isProcessingRef.current = false;
+      }
+    }
+
+    // Animation frame pump for smooth 60fps rendering while tab is active
+    function onAnimationFrame() {
+      if (!isRunning) return;
+      executeInference();
+      animFrameIdRef.current = requestAnimationFrame(onAnimationFrame);
+    }
+
+    animFrameIdRef.current = requestAnimationFrame(onAnimationFrame);
+
+    // Background Tab Ticker:
+    // When the user switches to the secondary Demo tab, browsers throttle requestAnimationFrame to 0 or 1 FPS.
+    // A dedicated Web Worker timer continues firing every ~50ms uninterrupted in the background.
+    let backgroundWorker: Worker | null = null;
+    try {
+      const workerCode = `
+        let timer = null;
+        self.onmessage = function(e) {
+          if (e.data === 'start') {
+            if (!timer) {
+              timer = setInterval(function() {
+                self.postMessage('tick');
+              }, 50); // ~20 FPS in background
+            }
+          } else if (e.data === 'stop') {
+            if (timer) {
+              clearInterval(timer);
+              timer = null;
+            }
+          }
+        };
+      `;
+      const blob = new Blob([workerCode], { type: 'application/javascript' });
+      const workerUrl = URL.createObjectURL(blob);
+      backgroundWorker = new Worker(workerUrl);
+      backgroundWorker.onmessage = () => {
+        executeInference();
+      };
+      backgroundWorker.postMessage('start');
+      URL.revokeObjectURL(workerUrl);
+    } catch (err) {
+      console.warn('Could not start Web Worker background timer, falling back to interval:', err);
+      // Fallback interval if Worker creation fails
+      const fallbackInterval = setInterval(() => {
+        executeInference();
+      }, 80);
+      return () => {
+        isRunning = false;
+        clearInterval(fallbackInterval);
+        if (animFrameIdRef.current !== null) {
+          cancelAnimationFrame(animFrameIdRef.current);
+          animFrameIdRef.current = null;
+        }
+        if (blinkDetectedClearTimerRef.current !== null) {
+          clearTimeout(blinkDetectedClearTimerRef.current);
+          blinkDetectedClearTimerRef.current = null;
+        }
+      };
+    }
+
+    return () => {
+      isRunning = false;
+      if (animFrameIdRef.current !== null) {
+        cancelAnimationFrame(animFrameIdRef.current);
+        animFrameIdRef.current = null;
+      }
+      if (backgroundWorker) {
+        backgroundWorker.postMessage('stop');
+        backgroundWorker.terminate();
+        backgroundWorker = null;
+      }
+      if (canvas) {
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+      }
+      // Clean up pending blinkDetected flash timer on loop teardown
+      if (blinkDetectedClearTimerRef.current !== null) {
+        clearTimeout(blinkDetectedClearTimerRef.current);
+        blinkDetectedClearTimerRef.current = null;
+      }
+    };
+  }, [active, pipelineReady, cameraActive]);
+
+  return {
+    videoRef,
+    canvasRef,
+    cameraActive,
+    cameraError,
+    pipelineReady,
+    pipelineLoading,
+    pipelineError,
+    poseDetected,
+    measuredFps,
+    postureMetrics,
+    postureClassification,
+    personCount,
+    detectionMode,
+    detectedFaceBoxes,
+    // Blink Detection & Rate Metrics
+    leftEAR,
+    rightEAR,
+    averageEAR,
+    eyesClosed,
+    eyeState,
+    stateMachineState,
+    blinkDetected,
+    blinkCount,
+    blinksPerMinute,
+    blinkRateStatus,
+    lowBlinkRate,
+    blinkTimestamps,
+    observationProgress,
+    lastBlinkTimestampMs,
+  };
 }
 </file>
 
@@ -4412,57 +5515,6 @@ export type SyncMessage =
   | DemoReadyMessage
   | SetupCompleteMessage
   | PostureTelemetryMessage;
-</file>
-
-<file path="src/App.tsx">
-import React from 'react';
-import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
-import { Home } from './pages/Home';
-import { Dashboard } from './pages/Dashboard';
-import { Demo } from './pages/Demo';
-import { Activity, LayoutDashboard, Home as HomeIcon } from 'lucide-react';
-
-export const App: React.FC = () => {
-  return (
-    <BrowserRouter>
-      <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
-        {/* Navigation Bar */}
-        <header className="top-nav">
-          <NavLink to="/" className="brand-badge">
-            <span className="nav-status-dot" aria-label="Monitoring capability available" />
-            <span>syncPosture</span>
-          </NavLink>
-
-          <nav className="nav-links">
-            <NavLink to="/" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} end>
-              <HomeIcon size={15} />
-              <span>Home</span>
-            </NavLink>
-            <NavLink to="/dashboard" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-              <Activity size={15} />
-              <span>Dashboard</span>
-            </NavLink>
-            <NavLink to="/demo" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-              <LayoutDashboard size={15} />
-              <span>Demo</span>
-            </NavLink>
-          </nav>
-        </header>
-
-        {/* Routes */}
-        <main style={{ flex: 1 }}>
-          <Routes>
-            <Route path="/" element={<Home />} />
-            <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/demo" element={<Demo />} />
-          </Routes>
-        </main>
-      </div>
-    </BrowserRouter>
-  );
-};
-
-export default App;
 </file>
 
 <file path="src/index.css">
@@ -6099,7 +7151,23 @@ export const Dashboard: React.FC = () => {
     poseDetected,
     measuredFps,
     postureMetrics,
-    postureClassification
+    postureClassification,
+    personCount,
+    detectionMode,
+    leftEAR,
+    rightEAR,
+    averageEAR,
+    eyesClosed,
+    eyeState,
+    blinkDetected,
+    blinkCount,
+    blinksPerMinute,
+    blinkRateStatus,
+    lowBlinkRate,
+    blinkTimestamps,
+    observationProgress,
+    stateMachineState,
+    lastBlinkTimestampMs,
   } = useVisionFeed({ active: true });
 
   // Posture Instructions Orientation state
@@ -6164,6 +7232,7 @@ export const Dashboard: React.FC = () => {
 
   // Stable ref so the debouncer instance survives re-renders
   const debouncerRef = useRef<PostureDebouncer | null>(null);
+  const prevDetectionModeRef = useRef<string>(detectionMode);
 
   if (!debouncerRef.current) {
     debouncerRef.current = new PostureDebouncer({
@@ -6182,13 +7251,36 @@ export const Dashboard: React.FC = () => {
     }
   }, [cameraActive]);
 
+  // Handle clean mode switching:
+  // When transitioning to multi_person or no_person: reset debouncer and immediately clear any intervention on Demo
+  // When transitioning back to single_person: ensure clean re-entry without stale debouncer scores
+  useEffect(() => {
+    const prevMode = prevDetectionModeRef.current;
+    prevDetectionModeRef.current = detectionMode;
+
+    if (detectionMode !== 'single_person') {
+      debouncerRef.current?.reset();
+      setSmoothedScore(0);
+      setDebouncerState('idle');
+      // If we previously had an intervention triggered or were in single_person mode, broadcast CLEAR_INTERVENTION
+      send({ type: 'CLEAR_INTERVENTION' });
+    } else if (prevMode !== 'single_person') {
+      // Clean re-entry into single_person mode
+      debouncerRef.current?.reset();
+      setSmoothedScore(0);
+      setDebouncerState('idle');
+    }
+  }, [detectionMode]);
+
   // Feed postureClassification into the debouncer and broadcast throttled continuous telemetry
   useEffect(() => {
     const debouncer = debouncerRef.current;
     if (!debouncer) return;
 
-    // 1. Determine raw score: if insufficient_data or no person, score is 0
+    // 1. Determine raw score: if multi-person, no-person, insufficient_data, score is 0
+    const isSingle = detectionMode === 'single_person';
     const isInsufficient =
+      !isSingle ||
       !postureMetrics?.isValid ||
       postureClassification.status === 'insufficient_data';
     const rawScore = isInsufficient ? 0 : (postureClassification.deviationScore ?? 0);
@@ -6259,7 +7351,59 @@ export const Dashboard: React.FC = () => {
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [postureClassification, postureMetrics]);
+  }, [postureClassification, postureMetrics, detectionMode]);
+
+  // ---------- Blink Alert BroadcastChannel Integration ----------
+  // Tracks previous lowBlinkRate so we only emit BLINK_ALERT on the
+  // exact transition false→true (alert activated) or true→false (recovered).
+  // Never emits per-frame; always at most one message per state change.
+  const prevLowBlinkRateRef = useRef<boolean>(false);
+  const lastBlinkAlertRateRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const prevLow = prevLowBlinkRateRef.current;
+    prevLowBlinkRateRef.current = lowBlinkRate;
+
+    if (blinkRateStatus !== 'active') {
+      // Still collecting: never send alert regardless of rate
+      return;
+    }
+
+    if (!prevLow && lowBlinkRate) {
+      // Transition: normal → low blink alert ACTIVATED
+      // Send BLINK_ALERT once when the debounced condition fires
+      const rate = blinksPerMinute ?? 0;
+      lastBlinkAlertRateRef.current = rate;
+      send({ type: 'BLINK_ALERT', blinksPerMin: rate });
+
+      const now = Date.now();
+      setLastSentMessage(`BLINK_ALERT blinksPerMin=${rate} at ${new Date(now).toLocaleTimeString()}`);
+      setReceivedMessages((prev) => [
+        `[${new Date(now).toLocaleTimeString()}] Broadcast: BLINK_ALERT (rate=${rate}/min — LOW)`,
+        ...prev.slice(0, 9)
+      ]);
+    } else if (prevLow && !lowBlinkRate) {
+      // Transition: low blink alert CLEARED — tell Demo to clear its intervention
+      lastBlinkAlertRateRef.current = null;
+      send({ type: 'CLEAR_INTERVENTION' });
+
+      const now = Date.now();
+      setLastSentMessage(`CLEAR_INTERVENTION (blink recovered) at ${new Date(now).toLocaleTimeString()}`);
+      setReceivedMessages((prev) => [
+        `[${new Date(now).toLocaleTimeString()}] Broadcast: CLEAR_INTERVENTION (blink rate recovered)`,
+        ...prev.slice(0, 9)
+      ]);
+    } else if (lowBlinkRate && blinksPerMinute !== null) {
+      // Alert is still active: re-broadcast if rate has changed meaningfully (±2 bpm)
+      // so Demo always shows the latest rate while the alert is live
+      const prev = lastBlinkAlertRateRef.current;
+      if (prev === null || Math.abs(blinksPerMinute - prev) >= 2) {
+        lastBlinkAlertRateRef.current = blinksPerMinute;
+        send({ type: 'BLINK_ALERT', blinksPerMin: blinksPerMinute });
+      }
+    }
+  // Depend only on the debounced boolean and rate; not on per-frame state
+  }, [lowBlinkRate, blinksPerMinute, blinkRateStatus]);
 
   // ---------- Channel Activity & Demo Heartbeat Listener ----------
   useEffect(() => {
@@ -6629,17 +7773,257 @@ export const Dashboard: React.FC = () => {
               )}
             </div>
 
+            {/* Compact Head Count Indicator directly below webcam */}
+            <div
+              style={{
+                marginTop: '0.85rem',
+                padding: '0.65rem 0.85rem',
+                backgroundColor: 'var(--ink-bg)',
+                border: '1px solid var(--ink-border)',
+                borderLeft:
+                  detectionMode === 'multi_person'
+                    ? '3px solid var(--signal-alert)'
+                    : detectionMode === 'single_person'
+                    ? '3px solid var(--signal-good)'
+                    : '3px solid var(--ink-border)',
+                borderRadius: '2px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                fontFamily: 'var(--font-mono)'
+              }}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                <span style={{ fontSize: '0.68rem', letterSpacing: '0.08em', color: 'var(--ink-muted)' }}>
+                  HEAD COUNT
+                </span>
+                <span
+                  style={{
+                    fontSize: '1.25rem',
+                    fontWeight: 700,
+                    lineHeight: 1.1,
+                    color:
+                      detectionMode === 'multi_person'
+                        ? 'var(--signal-alert)'
+                        : detectionMode === 'single_person'
+                        ? 'var(--signal-good)'
+                        : 'var(--ink-muted)'
+                  }}
+                >
+                  {personCount}
+                </span>
+              </div>
+
+              <div style={{ textAlign: 'right' }}>
+                {detectionMode === 'single_person' && (
+                  <span
+                    style={{
+                      fontSize: '0.72rem',
+                      fontWeight: 600,
+                      letterSpacing: '0.06em',
+                      color: 'var(--signal-good)'
+                    }}
+                  >
+                    POSTURE MONITORING ACTIVE
+                  </span>
+                )}
+                {detectionMode === 'multi_person' && (
+                  <span
+                    style={{
+                      fontSize: '0.72rem',
+                      fontWeight: 600,
+                      letterSpacing: '0.06em',
+                      color: 'var(--signal-alert)'
+                    }}
+                  >
+                    MULTI-PERSON MODE
+                  </span>
+                )}
+                {detectionMode === 'no_person' && (
+                  <span
+                    style={{
+                      fontSize: '0.72rem',
+                      color: 'var(--ink-muted)',
+                      letterSpacing: '0.04em'
+                    }}
+                  >
+                    NO SUBJECT DETECTED
+                  </span>
+                )}
+              </div>
+            </div>
+
             <div style={{
-              marginTop: '0.85rem',
+              marginTop: '0.65rem',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
               fontFamily: 'var(--font-mono)',
-              fontSize: '0.75rem',
+              fontSize: '0.72rem',
               color: 'var(--ink-muted)'
             }}>
               <span>INFERENCE RATE : <span style={{ color: 'var(--ink-text)' }}>{measuredFps} FPS</span></span>
-              <span>{poseDetected ? '33 LANDMARKS ACTIVE' : 'NO SUBJECT DETECTED'}</span>
+              <span>{poseDetected ? '33 LANDMARKS ACTIVE' : 'POSE SENSOR PAUSED'}</span>
+            </div>
+          </div>
+
+          {/* Blink Monitoring — Developer Telemetry Panel */}
+          <div className="glass-panel" style={{ padding: '1.25rem' }}>
+            <div className="panel-header" style={{ marginBottom: '0.85rem' }}>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', letterSpacing: '0.06em', color: 'var(--ink-text)' }}>
+                OCULAR TELEMETRY // BLINK MONITOR
+              </span>
+              <span style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: '0.72rem',
+                fontWeight: 600,
+                color: eyesClosed ? 'var(--signal-alert)' : 'var(--signal-good)'
+              }}>
+                [ {eyeState} ]
+              </span>
+            </div>
+
+            {/* ── Top row: BLINK RATE + BLINKS ── */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.65rem', marginBottom: '0.65rem' }}>
+              {/* Blink Rate */}
+              <div style={{
+                background: lowBlinkRate ? 'rgba(255,107,74,0.08)' : 'var(--ink-bg)',
+                padding: '0.65rem 0.85rem',
+                borderRadius: '2px',
+                border: `1px solid ${lowBlinkRate ? 'var(--signal-alert)' : 'var(--ink-border)'}`,
+                borderLeft: `3px solid ${lowBlinkRate ? 'var(--signal-alert)' : blinkRateStatus === 'active' ? 'var(--signal-good)' : 'var(--ink-border)'}`,
+                transition: 'all 0.2s ease'
+              }}>
+                <div style={{ color: 'var(--ink-muted)', fontSize: '0.65rem', fontFamily: 'var(--font-mono)', letterSpacing: '0.05em', marginBottom: '4px' }}>BLINK RATE</div>
+                <div style={{ fontFamily: 'var(--font-mono)', lineHeight: 1 }}>
+                  {blinkRateStatus === 'collecting' ? (
+                    <span style={{ fontSize: '0.78rem', color: 'var(--ink-muted)' }}>
+                      Collecting blink data&hellip;<br />
+                      <span style={{ fontSize: '0.65rem', color: 'var(--ink-border)' }}>{Math.round(observationProgress * 100)}% of 30s</span>
+                    </span>
+                  ) : (
+                    <>
+                      <span style={{ fontSize: '1.5rem', fontWeight: 700, color: lowBlinkRate ? 'var(--signal-alert)' : 'var(--signal-good)' }}>
+                        {blinksPerMinute ?? '—'}
+                      </span>
+                      <span style={{ fontSize: '0.72rem', color: 'var(--ink-muted)', marginLeft: '4px' }}>blinks/min</span>
+                      {lowBlinkRate && (
+                        <div style={{ fontSize: '0.62rem', fontWeight: 700, color: 'var(--signal-alert)', marginTop: '3px', letterSpacing: '0.06em' }}>⚠ LOW (&lt; 10)</div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Blink count + last blink */}
+              <div style={{
+                background: blinkDetected ? 'rgba(79,216,196,0.12)' : 'var(--ink-bg)',
+                padding: '0.65rem 0.85rem',
+                borderRadius: '2px',
+                border: `1px solid ${blinkDetected ? 'var(--signal-good)' : 'var(--ink-border)'}`,
+                borderLeft: '3px solid var(--signal-good)',
+                transition: 'all 0.15s ease'
+              }}>
+                <div style={{ color: 'var(--ink-muted)', fontSize: '0.65rem', fontFamily: 'var(--font-mono)', letterSpacing: '0.05em', marginBottom: '4px' }}>BLINKS</div>
+                <div style={{ fontFamily: 'var(--font-mono)', lineHeight: 1 }}>
+                  <span style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--signal-good)' }}>{blinkCount}</span>
+                  <span style={{ fontSize: '0.72rem', color: 'var(--ink-muted)', marginLeft: '4px' }}>total</span>
+                  {blinkDetected && (
+                    <div style={{ fontSize: '0.62rem', fontWeight: 700, color: 'var(--signal-good)', marginTop: '3px', letterSpacing: '0.04em' }}>● BLINK DETECTED</div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* ── EAR row: Left | Right | Avg ── */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem', marginBottom: '0.65rem' }}>
+              {[
+                { label: 'LEFT EAR',  value: leftEAR },
+                { label: 'RIGHT EAR', value: rightEAR },
+                { label: 'AVG EAR',   value: averageEAR, highlight: true },
+              ].map(({ label, value, highlight }) => (
+                <div key={label} style={{
+                  background: 'var(--ink-bg)',
+                  padding: '0.45rem 0.6rem',
+                  borderRadius: '2px',
+                  border: '1px solid var(--ink-border)',
+                  fontFamily: 'var(--font-mono)'
+                }}>
+                  <div style={{ color: 'var(--ink-muted)', fontSize: '0.62rem', marginBottom: '2px' }}>{label}</div>
+                  <div style={{
+                    fontSize: '1rem',
+                    fontWeight: 600,
+                    color: highlight
+                      ? eyesClosed ? 'var(--signal-alert)' : 'var(--signal-good)'
+                      : 'var(--ink-text)'
+                  }}>
+                    {value.toFixed(3)}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* ── Status row: Eye State | Status | Low Blink ── */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem', marginBottom: '0.65rem' }}>
+              <div style={{ background: 'var(--ink-bg)', padding: '0.45rem 0.6rem', borderRadius: '2px', border: '1px solid var(--ink-border)', fontFamily: 'var(--font-mono)' }}>
+                <div style={{ color: 'var(--ink-muted)', fontSize: '0.62rem', marginBottom: '2px' }}>EYE STATE</div>
+                <div style={{ fontSize: '0.82rem', fontWeight: 600, color: eyesClosed ? 'var(--signal-alert)' : 'var(--signal-good)' }}>
+                  {eyeState}
+                </div>
+              </div>
+              <div style={{ background: 'var(--ink-bg)', padding: '0.45rem 0.6rem', borderRadius: '2px', border: '1px solid var(--ink-border)', fontFamily: 'var(--font-mono)' }}>
+                <div style={{ color: 'var(--ink-muted)', fontSize: '0.62rem', marginBottom: '2px' }}>STATUS</div>
+                <div style={{
+                  fontSize: '0.82rem',
+                  fontWeight: 600,
+                  color: blinkRateStatus === 'active' ? 'var(--signal-good)' : 'var(--ink-muted)'
+                }}>
+                  {blinkRateStatus.toUpperCase()}
+                </div>
+              </div>
+              <div style={{
+                background: lowBlinkRate ? 'rgba(255,107,74,0.08)' : 'var(--ink-bg)',
+                padding: '0.45rem 0.6rem',
+                borderRadius: '2px',
+                border: `1px solid ${lowBlinkRate ? 'var(--signal-alert)' : 'var(--ink-border)'}`,
+                fontFamily: 'var(--font-mono)'
+              }}>
+                <div style={{ color: 'var(--ink-muted)', fontSize: '0.62rem', marginBottom: '2px' }}>LOW BLINK RATE</div>
+                <div style={{ fontSize: '0.82rem', fontWeight: 600, color: lowBlinkRate ? 'var(--signal-alert)' : 'var(--signal-good)' }}>
+                  {lowBlinkRate ? 'LOW' : 'NORMAL'}
+                </div>
+              </div>
+            </div>
+
+            {/* ── Dev detail row: SM state | window count | last blink ── */}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr 1fr',
+              gap: '0.5rem',
+              padding: '0.5rem 0.65rem',
+              background: 'var(--ink-bg)',
+              border: '1px solid var(--ink-border)',
+              borderRadius: '2px',
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.68rem',
+              color: 'var(--ink-muted)'
+            }}>
+              <div>
+                <span>SM STATE</span><br />
+                <span style={{ color: 'var(--ink-text)' }}>{stateMachineState}</span>
+              </div>
+              <div>
+                <span>WINDOW</span><br />
+                <span style={{ color: 'var(--ink-text)' }}>{blinkTimestamps.length} in 60s</span>
+              </div>
+              <div>
+                <span>LAST BLINK</span><br />
+                <span style={{ color: 'var(--ink-text)' }}>
+                  {lastBlinkTimestampMs !== null
+                    ? `${((performance.now() - lastBlinkTimestampMs) / 1000).toFixed(1)}s ago`
+                    : '—'}
+                </span>
+              </div>
             </div>
           </div>
 

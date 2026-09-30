@@ -10,6 +10,8 @@ import { Journal } from '../components/Journal';
 import { FinalCTA } from '../components/FinalCTA';
 import { Footer } from '../components/Footer';
 import { ShieldAlert } from 'lucide-react';
+import { LowBlinkNotification } from '../components/LowBlinkNotification';
+import { EyeBreakIntervention } from '../components/EyeBreakIntervention';
 
 // ---------------------------------------------------------------------------
 // Nonlinear progressive visual degradation mapping:
@@ -84,6 +86,17 @@ export const Demo: React.FC = () => {
   const [baseIntensity, setBaseIntensity] = useState<number>(0);
   const [isInterventionTriggered, setIsInterventionTriggered] = useState<boolean>(false);
   const [isInsufficientData, setIsInsufficientData] = useState<boolean>(false);
+
+  // Low blink rate intervention state (received via BLINK_ALERT message from Dashboard)
+  const [blinkAlertRate, setBlinkAlertRate] = useState<number | null>(null);
+
+  // 20-20-20 Eye break intervention state (received via BREAK_REMINDER message from Dashboard)
+  const [breakIntervention, setBreakIntervention] = useState<{
+    active: boolean;
+    remainingSeconds: number;
+    isComplete: boolean;
+  } | null>(null);
+  const breakCompleteTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Time escalation tracking: timestamp when sustained deviation was triggered
   const triggeredStartTimestampRef = useRef<number | null>(null);
@@ -203,15 +216,43 @@ export const Demo: React.FC = () => {
       } else if (msg.type === 'CLEAR_INTERVENTION') {
         setIsInterventionTriggered(false);
         setBaseIntensity(0);
+        setBlinkAlertRate(null);
       } else if (msg.type === 'BLINK_ALERT') {
         setIsInsufficientData(false);
         setIsInterventionTriggered(true);
         setBaseIntensity(0.4);
+        setBlinkAlertRate(typeof msg.blinksPerMin === 'number' ? msg.blinksPerMin : 0);
+      } else if (msg.type === 'BREAK_REMINDER') {
+        if (msg.state === 'break') {
+          if (breakCompleteTimeoutRef.current) {
+            clearTimeout(breakCompleteTimeoutRef.current);
+            breakCompleteTimeoutRef.current = null;
+          }
+          setBreakIntervention({
+            active: true,
+            remainingSeconds: typeof msg.remainingSeconds === 'number' ? msg.remainingSeconds : 20,
+            isComplete: false
+          });
+        } else if (msg.state === 'complete') {
+          setBreakIntervention((prev) =>
+            prev ? { ...prev, active: false, isComplete: true, remainingSeconds: 0 } : null
+          );
+          if (breakCompleteTimeoutRef.current) {
+            clearTimeout(breakCompleteTimeoutRef.current);
+          }
+          breakCompleteTimeoutRef.current = setTimeout(() => {
+            setBreakIntervention(null);
+            breakCompleteTimeoutRef.current = null;
+          }, 2000);
+        }
       }
     });
 
     return () => {
       clearInterval(readyHeartbeat);
+      if (breakCompleteTimeoutRef.current) {
+        clearTimeout(breakCompleteTimeoutRef.current);
+      }
       unsubscribe();
     };
   }, []);
@@ -356,6 +397,19 @@ export const Demo: React.FC = () => {
         <FinalCTA />
         <Footer />
       </div>
+
+      {/* Floating Low Blink Rate Notification (Demo-only) */}
+      <LowBlinkNotification
+        visible={blinkAlertRate !== null}
+        blinkRate={blinkAlertRate}
+      />
+
+      {/* 20-20-20 Eye Break Intervention (Demo-only) */}
+      <EyeBreakIntervention
+        visible={breakIntervention !== null}
+        remainingSeconds={breakIntervention?.remainingSeconds ?? 20}
+        isComplete={breakIntervention?.isComplete ?? false}
+      />
     </div>
   );
 };

@@ -15,6 +15,8 @@ export interface BlinkAlertMessage {
 
 export interface BreakReminderMessage {
   type: 'BREAK_REMINDER';
+  state?: 'break' | 'complete';
+  remainingSeconds?: number;
 }
 
 export interface ClearInterventionMessage {

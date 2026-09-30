@@ -5,9 +5,35 @@ import { useVisionFeed } from '../lib/hooks/useVisionFeed';
 import { PostureDebouncer } from '../lib/posture/temporalDebounce';
 import type { DebouncerState } from '../lib/posture/temporalDebounce';
 import { PostureInstructions } from '../components/PostureInstructions';
-import { ShieldAlert } from 'lucide-react';
+import { ShieldAlert, VideoOff } from 'lucide-react';
+import { TwentyTwentyTimer } from '../lib/break/twentyTwentyTimer';
+import { PrivacyNotice } from '../components/PrivacyNotice';
+import { hasPrivacyConsent, setPrivacyConsent } from '../lib/privacy/privacyConsent';
 
 export const Dashboard: React.FC = () => {
+  // Privacy Notice & Camera Consent Gate
+  const [hasConsent, setHasConsent] = useState<boolean>(() => hasPrivacyConsent());
+  const [showPrivacyNotice, setShowPrivacyNotice] = useState<boolean>(() => !hasPrivacyConsent());
+  const [userDeclinedConsent, setUserDeclinedConsent] = useState<boolean>(false);
+
+  const handlePrivacyContinue = () => {
+    setPrivacyConsent();
+    setHasConsent(true);
+    setShowPrivacyNotice(false);
+    setUserDeclinedConsent(false);
+  };
+
+  const handlePrivacyNotNow = () => {
+    setShowPrivacyNotice(false);
+    setUserDeclinedConsent(true);
+  };
+
+  const handleReopenPrivacyNotice = () => {
+    setShowPrivacyNotice(true);
+  };
+
+  const isCameraEnabled = hasConsent && !userDeclinedConsent;
+
   const {
     videoRef,
     canvasRef,
@@ -21,8 +47,22 @@ export const Dashboard: React.FC = () => {
     postureMetrics,
     postureClassification,
     personCount,
-    detectionMode
-  } = useVisionFeed({ active: true });
+    detectionMode,
+    leftEAR,
+    rightEAR,
+    averageEAR,
+    eyesClosed,
+    eyeState,
+    blinkDetected,
+    blinkCount,
+    blinksPerMinute,
+    blinkRateStatus,
+    lowBlinkRate,
+    blinkTimestamps,
+    observationProgress,
+    stateMachineState,
+    lastBlinkTimestampMs,
+  } = useVisionFeed({ active: isCameraEnabled, hasConsent: isCameraEnabled });
 
   // Posture Instructions Orientation state
   const [hasSeenInstructions, setHasSeenInstructions] = useState<boolean>(() => {
@@ -207,6 +247,107 @@ export const Dashboard: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [postureClassification, postureMetrics, detectionMode]);
 
+  // ---------- Blink Alert BroadcastChannel Integration ----------
+  // Tracks previous lowBlinkRate so we only emit BLINK_ALERT on the
+  // exact transition false→true (alert activated) or true→false (recovered).
+  // Never emits per-frame; always at most one message per state change.
+  const prevLowBlinkRateRef = useRef<boolean>(false);
+  const lastBlinkAlertRateRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const prevLow = prevLowBlinkRateRef.current;
+    prevLowBlinkRateRef.current = lowBlinkRate;
+
+    if (blinkRateStatus !== 'active') {
+      // Still collecting: never send alert regardless of rate
+      return;
+    }
+
+    if (!prevLow && lowBlinkRate) {
+      // Transition: normal → low blink alert ACTIVATED
+      // Send BLINK_ALERT once when the debounced condition fires
+      const rate = blinksPerMinute ?? 0;
+      lastBlinkAlertRateRef.current = rate;
+      send({ type: 'BLINK_ALERT', blinksPerMin: rate });
+
+      const now = Date.now();
+      setLastSentMessage(`BLINK_ALERT blinksPerMin=${rate} at ${new Date(now).toLocaleTimeString()}`);
+      setReceivedMessages((prev) => [
+        `[${new Date(now).toLocaleTimeString()}] Broadcast: BLINK_ALERT (rate=${rate}/min — LOW)`,
+        ...prev.slice(0, 9)
+      ]);
+    } else if (prevLow && !lowBlinkRate) {
+      // Transition: low blink alert CLEARED — tell Demo to clear its intervention
+      lastBlinkAlertRateRef.current = null;
+      send({ type: 'CLEAR_INTERVENTION' });
+
+      const now = Date.now();
+      setLastSentMessage(`CLEAR_INTERVENTION (blink recovered) at ${new Date(now).toLocaleTimeString()}`);
+      setReceivedMessages((prev) => [
+        `[${new Date(now).toLocaleTimeString()}] Broadcast: CLEAR_INTERVENTION (blink rate recovered)`,
+        ...prev.slice(0, 9)
+      ]);
+    } else if (lowBlinkRate && blinksPerMinute !== null) {
+      // Alert is still active: re-broadcast if rate has changed meaningfully (±2 bpm)
+      // so Demo always shows the latest rate while the alert is live
+      const prev = lastBlinkAlertRateRef.current;
+      if (prev === null || Math.abs(blinksPerMinute - prev) >= 2) {
+        lastBlinkAlertRateRef.current = blinksPerMinute;
+        send({ type: 'BLINK_ALERT', blinksPerMin: blinksPerMinute });
+      }
+    }
+  // Depend only on the debounced boolean and rate; not on per-frame state
+  }, [lowBlinkRate, blinksPerMinute, blinkRateStatus]);
+
+  // ---------- 20-20-20 Authoritative Eye Break Timer Engine ----------
+  const twentyTwentyTimerRef = useRef<TwentyTwentyTimer | null>(null);
+  if (!twentyTwentyTimerRef.current) {
+    twentyTwentyTimerRef.current = new TwentyTwentyTimer();
+    if (typeof window !== 'undefined') {
+      (window as any).__twentyTwentyTimer = twentyTwentyTimerRef.current;
+    }
+  }
+
+  useEffect(() => {
+    const timer = twentyTwentyTimerRef.current;
+    if (!timer) return;
+
+    if (cameraActive) {
+      timer.start();
+    } else {
+      timer.pause();
+      return;
+    }
+
+    let prevState = timer.getSnapshot().state;
+
+    const intervalId = setInterval(() => {
+      const snap = timer.update();
+      const currentState = snap.state;
+
+      if (currentState === 'break') {
+        const remainingSeconds = Math.ceil(snap.breakRemainingMs / 1000);
+        send({
+          type: 'BREAK_REMINDER',
+          state: 'break',
+          remainingSeconds
+        });
+      } else if (prevState === 'break' && currentState === 'monitoring') {
+        send({
+          type: 'BREAK_REMINDER',
+          state: 'complete',
+          remainingSeconds: 0
+        });
+      }
+
+      prevState = currentState;
+    }, 500);
+
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [cameraActive]);
+
   // ---------- Channel Activity & Demo Heartbeat Listener ----------
   useEffect(() => {
     const unsubscribe = onMessage((msg: SyncMessage) => {
@@ -254,6 +395,16 @@ export const Dashboard: React.FC = () => {
             status: currentStatus,
             severity: postureClassification.severity,
             intensity: currentIntensity
+          });
+        }
+
+        // Synchronize 20-20-20 break state if break is currently active
+        const timerSnap = twentyTwentyTimerRef.current?.getSnapshot();
+        if (timerSnap && timerSnap.state === 'break') {
+          send({
+            type: 'BREAK_REMINDER',
+            state: 'break',
+            remainingSeconds: Math.ceil(timerSnap.breakRemainingMs / 1000)
           });
         }
       } else {
@@ -533,11 +684,33 @@ export const Dashboard: React.FC = () => {
               justifyContent: 'center',
               border: '1px solid var(--ink-border)'
             }}>
-              {cameraError ? (
+              {!hasConsent || userDeclinedConsent ? (
+                <div style={{ textAlign: 'center', padding: '1.75rem 1.25rem', color: 'var(--ink-text)' }}>
+                  <VideoOff size={32} style={{ margin: '0 auto 0.75rem', color: 'var(--ink-muted)' }} />
+                  <p style={{ fontWeight: 600, fontFamily: 'var(--font-mono)', fontSize: '0.85rem', color: 'var(--ink-text)', letterSpacing: '0.04em' }}>
+                    CAMERA ACCESS REQUIRED
+                  </p>
+                  <p style={{ fontSize: '0.8rem', color: 'var(--ink-muted)', margin: '0.4rem auto 1rem', maxWidth: '320px', lineHeight: 1.45 }}>
+                    PostureSync needs camera access to provide real-time posture and blink monitoring.
+                  </p>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={handleReopenPrivacyNotice}
+                    style={{ fontSize: '0.8rem', padding: '0.45rem 1rem' }}
+                  >
+                    Allow Camera
+                  </button>
+                </div>
+              ) : cameraError ? (
                 <div style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--signal-alert)' }}>
                   <ShieldAlert size={32} style={{ margin: '0 auto 0.5rem' }} />
-                  <p style={{ fontWeight: 600, fontFamily: 'var(--font-mono)', fontSize: '0.85rem' }}>CAMERA ACCESS ERROR</p>
-                  <p style={{ fontSize: '0.8rem', color: 'var(--ink-muted)', marginTop: '0.25rem' }}>{cameraError}</p>
+                  <p style={{ fontWeight: 600, fontFamily: 'var(--font-mono)', fontSize: '0.85rem' }}>
+                    {cameraError.includes('browser settings') ? 'CAMERA ACCESS BLOCKED' : 'CAMERA ACCESS ERROR'}
+                  </p>
+                  <p style={{ fontSize: '0.8rem', color: 'var(--ink-muted)', marginTop: '0.35rem', maxWidth: '340px', lineHeight: 1.4 }}>
+                    {cameraError}
+                  </p>
                 </div>
               ) : pipelineError ? (
                 <div style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--signal-alert)' }}>
@@ -666,6 +839,166 @@ export const Dashboard: React.FC = () => {
             }}>
               <span>INFERENCE RATE : <span style={{ color: 'var(--ink-text)' }}>{measuredFps} FPS</span></span>
               <span>{poseDetected ? '33 LANDMARKS ACTIVE' : 'POSE SENSOR PAUSED'}</span>
+            </div>
+          </div>
+
+          {/* Blink Monitoring — Developer Telemetry Panel */}
+          <div className="glass-panel" style={{ padding: '1.25rem' }}>
+            <div className="panel-header" style={{ marginBottom: '0.85rem' }}>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', letterSpacing: '0.06em', color: 'var(--ink-text)' }}>
+                OCULAR TELEMETRY // BLINK MONITOR
+              </span>
+              <span style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: '0.72rem',
+                fontWeight: 600,
+                color: eyesClosed ? 'var(--signal-alert)' : 'var(--signal-good)'
+              }}>
+                [ {eyeState} ]
+              </span>
+            </div>
+
+            {/* ── Top row: BLINK RATE + BLINKS ── */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.65rem', marginBottom: '0.65rem' }}>
+              {/* Blink Rate */}
+              <div style={{
+                background: lowBlinkRate ? 'rgba(255,107,74,0.08)' : 'var(--ink-bg)',
+                padding: '0.65rem 0.85rem',
+                borderRadius: '2px',
+                border: `1px solid ${lowBlinkRate ? 'var(--signal-alert)' : 'var(--ink-border)'}`,
+                borderLeft: `3px solid ${lowBlinkRate ? 'var(--signal-alert)' : blinkRateStatus === 'active' ? 'var(--signal-good)' : 'var(--ink-border)'}`,
+                transition: 'all 0.2s ease'
+              }}>
+                <div style={{ color: 'var(--ink-muted)', fontSize: '0.65rem', fontFamily: 'var(--font-mono)', letterSpacing: '0.05em', marginBottom: '4px' }}>BLINK RATE</div>
+                <div style={{ fontFamily: 'var(--font-mono)', lineHeight: 1 }}>
+                  {blinkRateStatus === 'collecting' ? (
+                    <span style={{ fontSize: '0.78rem', color: 'var(--ink-muted)' }}>
+                      Collecting blink data&hellip;<br />
+                      <span style={{ fontSize: '0.65rem', color: 'var(--ink-border)' }}>{Math.round(observationProgress * 100)}% of 30s</span>
+                    </span>
+                  ) : (
+                    <>
+                      <span style={{ fontSize: '1.5rem', fontWeight: 700, color: lowBlinkRate ? 'var(--signal-alert)' : 'var(--signal-good)' }}>
+                        {blinksPerMinute ?? '—'}
+                      </span>
+                      <span style={{ fontSize: '0.72rem', color: 'var(--ink-muted)', marginLeft: '4px' }}>blinks/min</span>
+                      {lowBlinkRate && (
+                        <div style={{ fontSize: '0.62rem', fontWeight: 700, color: 'var(--signal-alert)', marginTop: '3px', letterSpacing: '0.06em' }}>⚠ LOW (&lt; 10)</div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Blink count + last blink */}
+              <div style={{
+                background: blinkDetected ? 'rgba(79,216,196,0.12)' : 'var(--ink-bg)',
+                padding: '0.65rem 0.85rem',
+                borderRadius: '2px',
+                border: `1px solid ${blinkDetected ? 'var(--signal-good)' : 'var(--ink-border)'}`,
+                borderLeft: '3px solid var(--signal-good)',
+                transition: 'all 0.15s ease'
+              }}>
+                <div style={{ color: 'var(--ink-muted)', fontSize: '0.65rem', fontFamily: 'var(--font-mono)', letterSpacing: '0.05em', marginBottom: '4px' }}>BLINKS</div>
+                <div style={{ fontFamily: 'var(--font-mono)', lineHeight: 1 }}>
+                  <span style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--signal-good)' }}>{blinkCount}</span>
+                  <span style={{ fontSize: '0.72rem', color: 'var(--ink-muted)', marginLeft: '4px' }}>total</span>
+                  {blinkDetected && (
+                    <div style={{ fontSize: '0.62rem', fontWeight: 700, color: 'var(--signal-good)', marginTop: '3px', letterSpacing: '0.04em' }}>● BLINK DETECTED</div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* ── EAR row: Left | Right | Avg ── */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem', marginBottom: '0.65rem' }}>
+              {[
+                { label: 'LEFT EAR',  value: leftEAR },
+                { label: 'RIGHT EAR', value: rightEAR },
+                { label: 'AVG EAR',   value: averageEAR, highlight: true },
+              ].map(({ label, value, highlight }) => (
+                <div key={label} style={{
+                  background: 'var(--ink-bg)',
+                  padding: '0.45rem 0.6rem',
+                  borderRadius: '2px',
+                  border: '1px solid var(--ink-border)',
+                  fontFamily: 'var(--font-mono)'
+                }}>
+                  <div style={{ color: 'var(--ink-muted)', fontSize: '0.62rem', marginBottom: '2px' }}>{label}</div>
+                  <div style={{
+                    fontSize: '1rem',
+                    fontWeight: 600,
+                    color: highlight
+                      ? eyesClosed ? 'var(--signal-alert)' : 'var(--signal-good)'
+                      : 'var(--ink-text)'
+                  }}>
+                    {value.toFixed(3)}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* ── Status row: Eye State | Status | Low Blink ── */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem', marginBottom: '0.65rem' }}>
+              <div style={{ background: 'var(--ink-bg)', padding: '0.45rem 0.6rem', borderRadius: '2px', border: '1px solid var(--ink-border)', fontFamily: 'var(--font-mono)' }}>
+                <div style={{ color: 'var(--ink-muted)', fontSize: '0.62rem', marginBottom: '2px' }}>EYE STATE</div>
+                <div style={{ fontSize: '0.82rem', fontWeight: 600, color: eyesClosed ? 'var(--signal-alert)' : 'var(--signal-good)' }}>
+                  {eyeState}
+                </div>
+              </div>
+              <div style={{ background: 'var(--ink-bg)', padding: '0.45rem 0.6rem', borderRadius: '2px', border: '1px solid var(--ink-border)', fontFamily: 'var(--font-mono)' }}>
+                <div style={{ color: 'var(--ink-muted)', fontSize: '0.62rem', marginBottom: '2px' }}>STATUS</div>
+                <div style={{
+                  fontSize: '0.82rem',
+                  fontWeight: 600,
+                  color: blinkRateStatus === 'active' ? 'var(--signal-good)' : 'var(--ink-muted)'
+                }}>
+                  {blinkRateStatus.toUpperCase()}
+                </div>
+              </div>
+              <div style={{
+                background: lowBlinkRate ? 'rgba(255,107,74,0.08)' : 'var(--ink-bg)',
+                padding: '0.45rem 0.6rem',
+                borderRadius: '2px',
+                border: `1px solid ${lowBlinkRate ? 'var(--signal-alert)' : 'var(--ink-border)'}`,
+                fontFamily: 'var(--font-mono)'
+              }}>
+                <div style={{ color: 'var(--ink-muted)', fontSize: '0.62rem', marginBottom: '2px' }}>LOW BLINK RATE</div>
+                <div style={{ fontSize: '0.82rem', fontWeight: 600, color: lowBlinkRate ? 'var(--signal-alert)' : 'var(--signal-good)' }}>
+                  {lowBlinkRate ? 'LOW' : 'NORMAL'}
+                </div>
+              </div>
+            </div>
+
+            {/* ── Dev detail row: SM state | window count | last blink ── */}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr 1fr',
+              gap: '0.5rem',
+              padding: '0.5rem 0.65rem',
+              background: 'var(--ink-bg)',
+              border: '1px solid var(--ink-border)',
+              borderRadius: '2px',
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.68rem',
+              color: 'var(--ink-muted)'
+            }}>
+              <div>
+                <span>SM STATE</span><br />
+                <span style={{ color: 'var(--ink-text)' }}>{stateMachineState}</span>
+              </div>
+              <div>
+                <span>WINDOW</span><br />
+                <span style={{ color: 'var(--ink-text)' }}>{blinkTimestamps.length} in 60s</span>
+              </div>
+              <div>
+                <span>LAST BLINK</span><br />
+                <span style={{ color: 'var(--ink-text)' }}>
+                  {lastBlinkTimestampMs !== null
+                    ? `${((performance.now() - lastBlinkTimestampMs) / 1000).toFixed(1)}s ago`
+                    : '—'}
+                </span>
+              </div>
             </div>
           </div>
 
@@ -999,6 +1332,13 @@ export const Dashboard: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Privacy Notice Modal Gate */}
+      <PrivacyNotice
+        isOpen={showPrivacyNotice}
+        onContinue={handlePrivacyContinue}
+        onNotNow={handlePrivacyNotNow}
+      />
     </div>
   );
 };
