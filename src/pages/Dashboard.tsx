@@ -5,10 +5,11 @@ import { useVisionFeed } from '../lib/hooks/useVisionFeed';
 import { PostureDebouncer } from '../lib/posture/temporalDebounce';
 import type { DebouncerState } from '../lib/posture/temporalDebounce';
 import { PostureInstructions } from '../components/PostureInstructions';
-import { ShieldAlert, VideoOff } from 'lucide-react';
+import { ShieldAlert, VideoOff, Sliders } from 'lucide-react';
 import { TwentyTwentyTimer } from '../lib/break/twentyTwentyTimer';
 import { PrivacyNotice } from '../components/PrivacyNotice';
 import { hasPrivacyConsent, setPrivacyConsent } from '../lib/privacy/privacyConsent';
+import { loadBaseline, saveBaseline, type PostureBaseline } from '../lib/posture/calibration';
 
 export const Dashboard: React.FC = () => {
   // Privacy Notice & Camera Consent Gate
@@ -32,7 +33,46 @@ export const Dashboard: React.FC = () => {
     setShowPrivacyNotice(true);
   };
 
-  const isCameraEnabled = hasConsent && !userDeclinedConsent;
+  const [isMonitoringActive, setIsMonitoringActive] = useState<boolean>(true);
+  const [blinkObservationPeriodSec, setBlinkObservationPeriodSec] = useState<number>(120);
+  const [lowBlinkRateThreshold, setLowBlinkRateThreshold] = useState<number>(10);
+
+  const isCameraEnabled = hasConsent && !userDeclinedConsent && isMonitoringActive;
+
+  // Posture Calibration Baseline state
+  const [baseline, setBaseline] = useState<PostureBaseline | null>(null);
+  const [isCalibrating, setIsCalibrating] = useState<boolean>(false);
+  const [calibrationSuccess, setCalibrationSuccess] = useState<boolean>(false);
+
+  useEffect(() => {
+    loadBaseline().then((b) => {
+      if (b.isCalibrated) setBaseline(b);
+    });
+
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      chrome.storage.local.get(['posturesync_settings']).then((res) => {
+        const s = res?.posturesync_settings as Record<string, any> | undefined;
+        if (s) {
+          if (typeof s.monitoringActive === 'boolean') setIsMonitoringActive(s.monitoringActive);
+          if (typeof s.blinkObservationPeriodSec === 'number') setBlinkObservationPeriodSec(s.blinkObservationPeriodSec);
+          if (typeof s.lowBlinkRateThreshold === 'number') setLowBlinkRateThreshold(s.lowBlinkRateThreshold);
+        }
+      }).catch(() => {});
+
+      const listener = (changes: { [key: string]: chrome.storage.StorageChange }, areaName: string) => {
+        if (areaName === 'local' && changes.posturesync_settings) {
+          const s = changes.posturesync_settings.newValue as Record<string, any> | undefined;
+          if (s) {
+            if (typeof s.monitoringActive === 'boolean') setIsMonitoringActive(s.monitoringActive);
+            if (typeof s.blinkObservationPeriodSec === 'number') setBlinkObservationPeriodSec(s.blinkObservationPeriodSec);
+            if (typeof s.lowBlinkRateThreshold === 'number') setLowBlinkRateThreshold(s.lowBlinkRateThreshold);
+          }
+        }
+      };
+      chrome.storage.onChanged.addListener(listener);
+      return () => chrome.storage.onChanged.removeListener(listener);
+    }
+  }, []);
 
   const {
     videoRef,
@@ -62,7 +102,46 @@ export const Dashboard: React.FC = () => {
     observationProgress,
     stateMachineState,
     lastBlinkTimestampMs,
-  } = useVisionFeed({ active: isCameraEnabled, hasConsent: isCameraEnabled });
+    trackingStatus,
+  } = useVisionFeed({
+    active: isCameraEnabled,
+    hasConsent: isCameraEnabled,
+    baseline,
+    blinkConfig: {
+      observationPeriodMs: blinkObservationPeriodSec * 1000,
+      lowBlinkRateThreshold
+    }
+  });
+
+  const handleQuickCalibrate = async () => {
+    if (!postureMetrics || !postureMetrics.isValid) return;
+    setIsCalibrating(true);
+    try {
+      const saved = await saveBaseline(postureMetrics);
+      setBaseline(saved);
+      setCalibrationSuccess(true);
+      setTimeout(() => setCalibrationSuccess(false), 3000);
+    } finally {
+      setIsCalibrating(false);
+    }
+  };
+
+  useEffect(() => {
+    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+      const handleRuntimeMsg = (msg: any) => {
+        if (!msg || typeof msg !== 'object') return;
+        if (msg.type === 'START_MONITORING') {
+          setIsMonitoringActive(true);
+        } else if (msg.type === 'STOP_MONITORING' || msg.type === 'MONITORING_STOPPED') {
+          setIsMonitoringActive(false);
+        } else if (msg.type === 'TRIGGER_CALIBRATION_FROM_POPUP') {
+          handleQuickCalibrate();
+        }
+      };
+      chrome.runtime.onMessage.addListener(handleRuntimeMsg);
+      return () => chrome.runtime.onMessage.removeListener(handleRuntimeMsg);
+    }
+  }, [postureMetrics]);
 
   // Posture Instructions Orientation state
   const [hasSeenInstructions, setHasSeenInstructions] = useState<boolean>(() => {
@@ -94,6 +173,9 @@ export const Dashboard: React.FC = () => {
   const handleCompleteInstructions = () => {
     localStorage.setItem('postureInstructionsSeen', 'true');
     setHasSeenInstructions(true);
+    if (postureMetrics && postureMetrics.isValid) {
+      saveBaseline(postureMetrics).then((b) => setBaseline(b)).catch(() => {});
+    }
     // Emit SETUP_COMPLETE over BroadcastChannel so secondary tabs know setup is valid
     send({ type: 'SETUP_COMPLETE' });
     // Keep Dashboard alive! Open secondary tab without unmounting Dashboard
@@ -127,6 +209,32 @@ export const Dashboard: React.FC = () => {
   // Stable ref so the debouncer instance survives re-renders
   const debouncerRef = useRef<PostureDebouncer | null>(null);
   const prevDetectionModeRef = useRef<string>(detectionMode);
+  const prevAlertLevelRef = useRef<number>(0);
+  const lastAlertUpdateBroadcastTimeRef = useRef<number>(0);
+
+  // Notify background that camera monitor feed is running
+  useEffect(() => {
+    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+      chrome.runtime.sendMessage({
+        type: 'MONITOR_FEED_ACTIVE',
+        active: cameraActive
+      }).catch(() => {});
+    }
+  }, [cameraActive]);
+
+  // Handle calibration request dispatched from extension popup
+  useEffect(() => {
+    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+      const listener = (msg: unknown) => {
+        const m = msg as { type?: string };
+        if (m && m.type === 'TRIGGER_CALIBRATION_FROM_POPUP') {
+          handleQuickCalibrate();
+        }
+      };
+      chrome.runtime.onMessage.addListener(listener);
+      return () => chrome.runtime.onMessage.removeListener(listener);
+    }
+  }, [postureMetrics]);
 
   if (!debouncerRef.current) {
     debouncerRef.current = new PostureDebouncer({
@@ -144,6 +252,68 @@ export const Dashboard: React.FC = () => {
       debouncerRef.current?.reset();
     }
   }, [cameraActive]);
+
+  // Sync settings and hold duration from extension
+  useEffect(() => {
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      chrome.storage.local.get('posturesync_settings').then((data) => {
+        const s = data?.posturesync_settings as {
+          holdDurationSec?: number;
+          monitoringActive?: boolean;
+          blinkObservationPeriodSec?: number;
+          lowBlinkRateThreshold?: number;
+        } | undefined;
+        if (s?.holdDurationSec && s.holdDurationSec > 0) {
+          debouncerRef.current?.setHoldDuration(s.holdDurationSec * 1000);
+        }
+        if (s?.monitoringActive !== undefined) {
+          setIsMonitoringActive(s.monitoringActive);
+        }
+        if (s?.blinkObservationPeriodSec) {
+          setBlinkObservationPeriodSec(s.blinkObservationPeriodSec);
+        }
+        if (s?.lowBlinkRateThreshold) {
+          setLowBlinkRateThreshold(s.lowBlinkRateThreshold);
+        }
+      }).catch(() => {});
+    }
+
+    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+      const listener = (msg: unknown) => {
+        const m = msg as {
+          type?: string;
+          settings?: {
+            holdDurationSec?: number;
+            monitoringActive?: boolean;
+            blinkObservationPeriodSec?: number;
+            lowBlinkRateThreshold?: number;
+          };
+        };
+        if (m && m.type === 'UPDATE_SETTINGS' && m.settings) {
+          if (m.settings.holdDurationSec) {
+            debouncerRef.current?.setHoldDuration(m.settings.holdDurationSec * 1000);
+          }
+          if (m.settings.monitoringActive !== undefined) {
+            setIsMonitoringActive(m.settings.monitoringActive);
+          }
+          if (m.settings.blinkObservationPeriodSec) {
+            setBlinkObservationPeriodSec(m.settings.blinkObservationPeriodSec);
+          }
+          if (m.settings.lowBlinkRateThreshold) {
+            setLowBlinkRateThreshold(m.settings.lowBlinkRateThreshold);
+          }
+        } else if (m && (m.type === 'START_MONITORING' || m.type === 'MONITORING_STARTED')) {
+          setIsMonitoringActive(true);
+        } else if (m && (m.type === 'STOP_MONITORING' || m.type === 'MONITORING_STOPPED')) {
+          setIsMonitoringActive(false);
+        }
+      };
+      chrome.runtime.onMessage.addListener(listener);
+      return () => {
+        chrome.runtime.onMessage.removeListener(listener);
+      };
+    }
+  }, []);
 
   // Handle clean mode switching:
   // When transitioning to multi_person or no_person: reset debouncer and immediately clear any intervention on Demo
@@ -201,26 +371,66 @@ export const Dashboard: React.FC = () => {
     const severity = isInsufficient || status === 'good' ? 0 : postureClassification.severity;
     const now = Date.now();
 
-    // 4. Immediate sends on critical state transitions
+    // 4. Progressive Alert Escalation Level
+    const progressive = debouncer.getProgressiveAlert(now);
+    const currentAlertLevel = progressive.alertLevel;
+    const isLevelEscalated = currentAlertLevel !== prevAlertLevelRef.current;
     const isStateTransition = prevState !== nextState;
 
-    if (prevState !== 'triggered' && nextState === 'triggered') {
-      // Sustained bad posture triggered
+    if (nextState === 'triggered') {
       const triggerStatus = status === 'good' || status === 'insufficient_data' ? 'slouching' : status;
-      send({
-        type: 'POSTURE_STATUS',
-        status: triggerStatus,
-        severity: severity > 0 ? severity : 1,
-        intensity: clampedIntensity > 0 ? clampedIntensity : 0.35,
-      });
+      const timeSinceAlertUpdate = now - lastAlertUpdateBroadcastTimeRef.current;
+
+      if (prevState !== 'triggered' || isLevelEscalated || timeSinceAlertUpdate >= 2500) {
+        const isEscalation = prevState !== 'triggered' || isLevelEscalated;
+        prevAlertLevelRef.current = currentAlertLevel;
+        lastAlertUpdateBroadcastTimeRef.current = now;
+
+        if (isEscalation) {
+          send({
+            type: 'POSTURE_STATUS',
+            status: triggerStatus,
+            severity: severity > 0 ? severity : 1,
+            intensity: clampedIntensity > 0 ? clampedIntensity : 0.35,
+          });
+        }
+
+        if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+          chrome.runtime.sendMessage({
+            type: 'PROGRESSIVE_ALERT_UPDATE',
+            alertLevel: currentAlertLevel,
+            blurPx: progressive.blurPx,
+            status: triggerStatus,
+            message: progressive.message,
+            soundEnabled: isEscalation,
+            isRecovering: false
+          }).catch(() => {});
+        }
+      }
+    } else if (prevState === 'triggered' && nextState === 'recovering') {
+      prevAlertLevelRef.current = 0;
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+        chrome.runtime.sendMessage({
+          type: 'PROGRESSIVE_ALERT_UPDATE',
+          alertLevel: 0,
+          blurPx: 0,
+          status: 'good',
+          message: 'Good job! Your posture looks better. Keep comfortable and relaxed.',
+          soundEnabled: false,
+          isRecovering: true
+        }).catch(() => {});
+      }
     } else if (prevState === 'recovering' && nextState === 'idle') {
-      // Clear intervention
+      prevAlertLevelRef.current = 0;
       send({ type: 'CLEAR_INTERVENTION' });
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+        chrome.runtime.sendMessage({ type: 'POSTURE_RESTORED' }).catch(() => {});
+      }
     }
 
     // 5. Throttled continuous telemetry broadcast (approx ~10Hz / 100ms interval or immediate on state change)
     const timeSinceLastBroadcast = now - lastTelemetryBroadcastTimeRef.current;
-    if (isStateTransition || timeSinceLastBroadcast >= 95) {
+    if (isStateTransition || isLevelEscalated || timeSinceLastBroadcast >= 95) {
       lastTelemetryBroadcastTimeRef.current = now;
 
       send({
@@ -232,11 +442,37 @@ export const Dashboard: React.FC = () => {
         timestamp: now
       });
 
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+        chrome.runtime.sendMessage({
+          type: 'POSTURE_TELEMETRY',
+          payload: {
+            status,
+            severity,
+            intensity: Number(clampedIntensity.toFixed(3)),
+            debouncerState: nextState,
+            accumulatingMs: debouncer.getAccumulatingDuration(now),
+            holdMs: debouncer.configuredHoldMs,
+            timestamp: now,
+            alertLevel: currentAlertLevel,
+            blurPx: progressive.blurPx,
+            alertMessage: progressive.message,
+            blinkCount,
+            blinksPerMinute,
+            blinkRateStatus,
+            lowBlinkRate,
+            faceDetected: trackingStatus === 'reliable',
+            poseDetected: Boolean(poseDetected),
+            observationProgress,
+            trackingStatus
+          }
+        }).catch(() => {});
+      }
+
       // 6. Log sampling: log immediately on state change, or sample approx once per second
       const timeSinceLastLog = now - lastLogSampleTimeRef.current;
       if (isStateTransition || timeSinceLastLog >= 1000) {
         lastLogSampleTimeRef.current = now;
-        const logEntry = `POSTURE_TELEMETRY status=${status} severity=${severity} intensity=${clampedIntensity.toFixed(2)} state=${nextState}`;
+        const logEntry = `POSTURE_TELEMETRY status=${status} severity=${severity} intensity=${clampedIntensity.toFixed(2)} state=${nextState} blinks=${blinkCount} bpm=${blinksPerMinute ?? '--'}`;
         setLastSentMessage(`${logEntry} at ${new Date(now).toLocaleTimeString()}`);
         setReceivedMessages((prev) => [
           `[${new Date(now).toLocaleTimeString()}] Broadcast: ${logEntry}`,
@@ -247,16 +483,51 @@ export const Dashboard: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [postureClassification, postureMetrics, detectionMode]);
 
-  // ---------- Blink Alert BroadcastChannel Integration ----------
-  // Tracks previous lowBlinkRate so we only emit BLINK_ALERT on the
-  // exact transition false→true (alert activated) or true→false (recovered).
-  // Never emits per-frame; always at most one message per state change.
+  // ---------- Blink Alert Extension & BroadcastChannel Integration ----------
   const prevLowBlinkRateRef = useRef<boolean>(false);
+  const prevTrackingStatusRef = useRef<string>('lost');
   const lastBlinkAlertRateRef = useRef<number | null>(null);
 
   useEffect(() => {
     const prevLow = prevLowBlinkRateRef.current;
     prevLowBlinkRateRef.current = lowBlinkRate;
+    const prevTrack = prevTrackingStatusRef.current;
+    prevTrackingStatusRef.current = trackingStatus;
+
+    // Send Blink Alert Update to extension
+    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+      if (trackingStatus !== 'reliable') {
+        if (prevTrack === 'reliable') {
+          chrome.runtime.sendMessage({
+            type: 'BLINK_ALERT_UPDATE',
+            isLowBlinkRate: false,
+            rate: null,
+            trackingStatus,
+            message: 'Eye tracking temporarily unavailable — check lighting or camera angle.'
+          }).catch(() => {});
+        }
+      } else if (!prevLow && lowBlinkRate) {
+        // Transition: normal -> low blink rate alert committed
+        const rate = blinksPerMinute ?? 0;
+        chrome.runtime.sendMessage({
+          type: 'BLINK_ALERT_UPDATE',
+          isLowBlinkRate: true,
+          rate,
+          trackingStatus: 'reliable',
+          message:
+            'Low blink rate detected! Remember to blink naturally, relax your eyes, and take a moment to look away from the screen.'
+        }).catch(() => {});
+      } else if (prevLow && !lowBlinkRate) {
+        // Transition: low blink rate cleared / recovered
+        chrome.runtime.sendMessage({
+          type: 'BLINK_ALERT_UPDATE',
+          isLowBlinkRate: false,
+          rate: blinksPerMinute,
+          trackingStatus: 'reliable',
+          message: ''
+        }).catch(() => {});
+      }
+    }
 
     if (blinkRateStatus !== 'active') {
       // Still collecting: never send alert regardless of rate
@@ -265,7 +536,6 @@ export const Dashboard: React.FC = () => {
 
     if (!prevLow && lowBlinkRate) {
       // Transition: normal → low blink alert ACTIVATED
-      // Send BLINK_ALERT once when the debounced condition fires
       const rate = blinksPerMinute ?? 0;
       lastBlinkAlertRateRef.current = rate;
       send({ type: 'BLINK_ALERT', blinksPerMin: rate });
@@ -277,7 +547,7 @@ export const Dashboard: React.FC = () => {
         ...prev.slice(0, 9)
       ]);
     } else if (prevLow && !lowBlinkRate) {
-      // Transition: low blink alert CLEARED — tell Demo to clear its intervention
+      // Transition: low blink alert CLEARED
       lastBlinkAlertRateRef.current = null;
       send({ type: 'CLEAR_INTERVENTION' });
 
@@ -288,16 +558,13 @@ export const Dashboard: React.FC = () => {
         ...prev.slice(0, 9)
       ]);
     } else if (lowBlinkRate && blinksPerMinute !== null) {
-      // Alert is still active: re-broadcast if rate has changed meaningfully (±2 bpm)
-      // so Demo always shows the latest rate while the alert is live
       const prev = lastBlinkAlertRateRef.current;
       if (prev === null || Math.abs(blinksPerMinute - prev) >= 2) {
         lastBlinkAlertRateRef.current = blinksPerMinute;
         send({ type: 'BLINK_ALERT', blinksPerMin: blinksPerMinute });
       }
     }
-  // Depend only on the debounced boolean and rate; not on per-frame state
-  }, [lowBlinkRate, blinksPerMinute, blinkRateStatus]);
+  }, [lowBlinkRate, blinksPerMinute, blinkRateStatus, trackingStatus]);
 
   // ---------- 20-20-20 Authoritative Eye Break Timer Engine ----------
   const twentyTwentyTimerRef = useRef<TwentyTwentyTimer | null>(null);
@@ -501,6 +768,36 @@ export const Dashboard: React.FC = () => {
 
         {/* Header Actions */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <button
+            id="btn-calibrate-posture"
+            onClick={handleQuickCalibrate}
+            disabled={!postureMetrics?.isValid || isCalibrating}
+            style={{
+              background: baseline ? 'rgba(16, 185, 129, 0.15)' : 'rgba(56, 189, 248, 0.15)',
+              border: `1px solid ${baseline ? '#10b981' : '#38bdf8'}`,
+              borderRadius: '3px',
+              padding: '0.35rem 0.75rem',
+              color: baseline ? '#10b981' : '#38bdf8',
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.75rem',
+              cursor: postureMetrics?.isValid ? 'pointer' : 'not-allowed',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '5px',
+              transition: 'all 0.15s ease'
+            }}
+          >
+            <Sliders size={12} />
+            <span>
+              {isCalibrating
+                ? 'CALIBRATING...'
+                : calibrationSuccess
+                ? '✓ CALIBRATED'
+                : baseline
+                ? 'RECALIBRATE'
+                : 'CALIBRATE POSTURE'}
+            </span>
+          </button>
           {hasSeenInstructions && (
             <>
               <button
@@ -611,20 +908,6 @@ export const Dashboard: React.FC = () => {
               <span>TAB 02 // WORKSPACE <span style={{ color: demoConnected ? 'var(--signal-good)' : 'var(--ink-muted)' }}>{demoConnected ? '● CONNECTED' : '○ WAITING'}</span></span>
             </div>
           </div>
-
-          <button
-            id="btn-launch-demo-banner"
-            className="btn btn-secondary"
-            onClick={launchDemoTab}
-            style={{
-              fontSize: '0.72rem',
-              padding: '0.35rem 0.85rem',
-              fontFamily: 'var(--font-mono)'
-            }}
-            aria-label="Open Demo Workspace in a new tab"
-          >
-            Open Demo Workspace &#8599;
-          </button>
         </div>
       )}
 
@@ -647,13 +930,13 @@ export const Dashboard: React.FC = () => {
             fontSize: '0.75rem'
           }}
         >
-          <span>Demo tab could not be opened automatically. Use OPEN DEMO WORKSPACE to continue.</span>
+          <span>Pop-up was blocked by your browser. Please allow pop-ups to open secondary windows.</span>
           <button
             className="btn btn-danger"
             onClick={launchDemoTab}
             style={{ fontSize: '0.75rem', padding: '0.35rem 0.85rem' }}
           >
-            OPEN DEMO WORKSPACE
+            RETRY
           </button>
         </div>
       )}

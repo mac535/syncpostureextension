@@ -18,6 +18,7 @@ import {
   type BlinkStateMachineState
 } from '../blink/blinkDetector';
 import { hasPrivacyConsent } from '../privacy/privacyConsent';
+import type { PostureBaseline } from '../posture/calibration';
 
 export type DetectionMode = 'no_person' | 'single_person' | 'multi_person';
 
@@ -26,6 +27,7 @@ export interface UseVisionFeedOptions {
   hasConsent?: boolean;
   smoothingWeight?: number;
   blinkConfig?: Partial<BlinkDetectorConfig>;
+  baseline?: PostureBaseline | null;
 }
 
 export interface UseVisionFeedResult {
@@ -57,12 +59,18 @@ export interface UseVisionFeedResult {
   lowBlinkRate: boolean;
   blinkTimestamps: number[];
   observationProgress: number;
+  trackingStatus: 'reliable' | 'unreliable' | 'lost';
   /** Monotonic ms timestamp of the most recently accepted blink event, or null if none yet. */
   lastBlinkTimestampMs: number | null;
 }
 
 export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeedResult {
-  const { active = true, hasConsent, smoothingWeight = 0.35, blinkConfig } = options;
+  const { active = true, hasConsent, smoothingWeight = 0.35, blinkConfig, baseline } = options;
+
+  const baselineRef = useRef<PostureBaseline | null>(baseline ?? null);
+  useEffect(() => {
+    baselineRef.current = baseline ?? null;
+  }, [baseline]);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -94,6 +102,9 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
   const prevObservationProgressRef = useRef<number>(0);
   const prevTimestampCountRef = useRef<number>(0);
   const prevLastBlinkTimestampRef = useRef<number | null>(null);
+  const lastUiUpdateTimeRef = useRef<number>(0);
+  const prevStatusRef = useRef<string>('insufficient_data');
+  const prevSeverityRef = useRef<number>(0);
 
   // Sync any changes to blinkConfig
   useEffect(() => {
@@ -133,6 +144,7 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
   const [blinkTimestamps, setBlinkTimestamps] = useState<number[]>([]);
   const [observationProgress, setObservationProgress] = useState<number>(0);
   const [lastBlinkTimestampMs, setLastBlinkTimestampMs] = useState<number | null>(null);
+  const [trackingStatus, setTrackingStatus] = useState<'reliable' | 'unreliable' | 'lost'>('lost');
 
   // Full reset when camera goes offline or vision session restarts
   useEffect(() => {
@@ -231,9 +243,10 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
         setCameraError(null);
         stream = await navigator.mediaDevices.getUserMedia({
           video: {
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-            facingMode: 'user'
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            facingMode: 'user',
+            frameRate: { ideal: 15, max: 20 }
           },
           audio: false
         });
@@ -275,7 +288,7 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
     };
   }, [active, hasConsent]);
 
-  // 3. Robust Inference, Math & Render Loop with Background Tab Support
+  // 3. Optimized Lightweight Inference Loop (~7.5 FPS / 130ms cadence)
   useEffect(() => {
     if (!active || !pipelineReady || !cameraActive) {
       return;
@@ -286,36 +299,29 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
     if (!video) return;
 
     let isRunning = true;
+    let timerId: ReturnType<typeof setInterval> | null = null;
+    let backgroundWorker: Worker | null = null;
 
-    // Core single-frame processor (can be called by either requestAnimationFrame or Worker ticker)
+    // Single frame inference execution - strictly guarded against overlapping runs
     function executeInference() {
-      if (!isRunning) return;
+      if (!isRunning || isProcessingRef.current) return;
+      if (!video || video.readyState < 2 || video.videoWidth === 0) return;
 
+      isProcessingRef.current = true;
       const now = performance.now();
-      // Throttle slightly to max ~30-40 FPS to avoid redundant cycles
-      if (now - lastProcessTimeRef.current < 25) {
-        return;
-      }
+      lastProcessTimeRef.current = now;
 
-      if (!isProcessingRef.current && video && video.readyState >= 2 && video.videoWidth > 0) {
-        isProcessingRef.current = true;
-        lastProcessTimeRef.current = now;
-
+      try {
         const currentTimestampMs = performance.now();
         const adjustedTimestampMs =
           currentTimestampMs > lastTimestampMsRef.current ? currentTimestampMs : lastTimestampMsRef.current + 1;
         lastTimestampMsRef.current = adjustedTimestampMs;
 
-        if (canvas && (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight)) {
-          canvas.width = video.videoWidth;
-          canvas.height = video.videoHeight;
-        }
-
-        // 1. Run Pose & Face Landmark inference (full posture rate)
+        // Run Pose & Face Landmark inference (fast pass, ~16ms total)
         const results = detectLandmarksForVideo(video, adjustedTimestampMs);
 
-        // 2. Run FaceDetector at lower frequency (~7-8 FPS / every ~125ms) for multi-person count
-        if (now - lastFaceDetectTimeRef.current >= 125) {
+        // Relaxed face detection for multi-person count (every 500ms)
+        if (now - lastFaceDetectTimeRef.current >= 500) {
           lastFaceDetectTimeRef.current = now;
           const detectorResult = detectFacesForVideo(video, adjustedTimestampMs);
 
@@ -335,7 +341,6 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
             cachedFaceBoxesRef.current = boxes;
             setDetectedFaceBoxes(boxes);
 
-            // Temporal stabilization / hysteresis over a rolling window (e.g. 5 samples ~ 600ms)
             const rawCount = boxes.length;
             const history = rawPersonCountsRef.current;
             history.push(rawCount);
@@ -343,7 +348,6 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
               history.shift();
             }
 
-            // Majority / stable vote across window to prevent rapid flickering
             const countFreq = new Map<number, number>();
             for (const c of history) {
               countFreq.set(c, (countFreq.get(c) ?? 0) + 1);
@@ -357,7 +361,6 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
               }
             }
 
-            // Derive detectionMode from stableCount
             let nextMode: DetectionMode = 'no_person';
             if (stableCount === 1) {
               nextMode = 'single_person';
@@ -365,7 +368,6 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
               nextMode = 'multi_person';
             }
 
-            // Update state only on change to avoid redundant React renders
             setPersonCount((prev) => (prev !== stableCount ? stableCount : prev));
             setDetectionMode((prev) => (prev !== nextMode ? nextMode : prev));
           }
@@ -375,28 +377,36 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
           const poseLandmarks = results.poseResult?.landmarks?.[0];
           const faceLandmarks = results.faceResult?.faceLandmarks?.[0];
 
-          // Determine current stable detection mode from stable count
           const currentCount = rawPersonCountsRef.current.length > 0
             ? rawPersonCountsRef.current[rawPersonCountsRef.current.length - 1]
             : 0;
           const isMultiPerson = cachedFaceBoxesRef.current.length >= 2 || currentCount >= 2;
           const isSinglePerson = !isMultiPerson && (cachedFaceBoxesRef.current.length === 1 || currentCount === 1);
 
-          // Canvas rendering:
-          // In multi-person mode: Draw ONLY face markers (01, 02...), NO posture skeleton
-          // In single-person mode: Draw existing posture skeleton and face mesh, NO multi-person boxes
-          // In 0-person mode: Clear canvas completely
-          if (canvas) {
-            const ctx = canvas.getContext('2d');
-            if (ctx) {
-              if (isMultiPerson) {
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-                drawFaceBoxesOnCanvas(ctx, canvas.width, canvas.height, cachedFaceBoxesRef.current);
-              } else if (isSinglePerson) {
-                drawLandmarksOnCanvas(ctx, canvas.width, canvas.height, poseLandmarks, faceLandmarks);
-              } else {
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-              }
+          // Render canvas ONLY when document is visible to save GPU and DOM paints
+          if (canvas && document.visibilityState === 'visible') {
+            if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+              canvas.width = video.videoWidth;
+              canvas.height = video.videoHeight;
+            }
+
+            // Schedule a lightweight rAF draw so paint does not block inference
+            if (animFrameIdRef.current === null) {
+              animFrameIdRef.current = requestAnimationFrame(() => {
+                animFrameIdRef.current = null;
+                if (!isRunning) return;
+                const ctx = canvas.getContext('2d');
+                if (ctx) {
+                  if (isMultiPerson) {
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    drawFaceBoxesOnCanvas(ctx, canvas.width, canvas.height, cachedFaceBoxesRef.current);
+                  } else if (isSinglePerson) {
+                    drawLandmarksOnCanvas(ctx, canvas.width, canvas.height, poseLandmarks, faceLandmarks);
+                  } else {
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                  }
+                }
+              });
             }
           }
 
@@ -404,40 +414,46 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
           setPoseDetected(isPosePresent && isSinglePerson);
 
           if (isSinglePerson && isPosePresent && poseLandmarks) {
-            // Exactly one person: run posture analysis safely
             const rawMetrics = computePostureMetrics(poseLandmarks);
             const smoothedMetrics = smootherRef.current.smooth(rawMetrics);
-            const classification = classifyPosture(smoothedMetrics);
+            const classification = classifyPosture(smoothedMetrics, baselineRef.current);
 
-            setPostureMetrics(smoothedMetrics);
-            setPostureClassification(classification);
+            // Throttle React state updates to ~3-4 FPS unless posture status or severity changes
+            const isStatusChanged = classification.status !== prevStatusRef.current || classification.severity !== prevSeverityRef.current;
+            const timeSinceLastUi = now - lastUiUpdateTimeRef.current;
+
+            if (isStatusChanged || timeSinceLastUi >= 260) {
+              lastUiUpdateTimeRef.current = now;
+              prevStatusRef.current = classification.status;
+              prevSeverityRef.current = classification.severity;
+              setPostureMetrics(smoothedMetrics);
+              setPostureClassification(classification);
+            }
           } else {
-            // Either 0 people, or multiple people: reset smoother and classification to avoid stale telemetry
             smootherRef.current.reset();
-            setPostureMetrics(null);
-            setPostureClassification({
-              status: 'insufficient_data',
-              severity: 0,
-              deviationScore: 0,
-              reason: isMultiPerson ? 'Multiple people detected in frame' : 'No person detected in camera frame'
-            });
+            if (prevStatusRef.current !== 'insufficient_data') {
+              prevStatusRef.current = 'insufficient_data';
+              prevSeverityRef.current = 0;
+              setPostureMetrics(null);
+              setPostureClassification({
+                status: 'insufficient_data',
+                severity: 0,
+                deviationScore: 0,
+                reason: isMultiPerson ? 'Multiple people detected in frame' : 'No person detected in camera frame'
+              });
+            }
           }
 
-          // 3. Blink Detection & Rolling Rate Foundation via MediaPipe FaceLandmarker mesh
+          // Blink detection (only when face landmarks are sampled)
           if (isSinglePerson && faceLandmarks) {
             const blinkRes = blinkDetectorRef.current.update(faceLandmarks, adjustedTimestampMs);
 
-            // ---- Change-guarded setState calls ----
-            // Only call setState when the value has actually changed. This prevents ~30
-            // React re-renders per second caused by unconditional per-frame setState calls.
-
-            // EAR values: rounded to 3dp for stability
-            const newLeft  = Number(blinkRes.leftEAR.toFixed(3));
+            const newLeft = Number(blinkRes.leftEAR.toFixed(3));
             const newRight = Number(blinkRes.rightEAR.toFixed(3));
-            const newAvg   = Number(blinkRes.averageEAR.toFixed(3));
-            if (newLeft  !== prevEARRef.current.left)  { setLeftEAR(newLeft);   prevEARRef.current.left  = newLeft;  }
+            const newAvg = Number(blinkRes.averageEAR.toFixed(3));
+            if (newLeft !== prevEARRef.current.left) { setLeftEAR(newLeft); prevEARRef.current.left = newLeft; }
             if (newRight !== prevEARRef.current.right) { setRightEAR(newRight); prevEARRef.current.right = newRight; }
-            if (newAvg   !== prevEARRef.current.avg)   { setAverageEAR(newAvg); prevEARRef.current.avg   = newAvg;   }
+            if (newAvg !== prevEARRef.current.avg) { setAverageEAR(newAvg); prevEARRef.current.avg = newAvg; }
 
             if (blinkRes.eyesClosed !== prevEyesClosedRef.current) {
               setEyesClosed(blinkRes.eyesClosed);
@@ -452,7 +468,6 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
               prevStateMachineStateRef.current = blinkRes.stateMachineState;
             }
 
-            // Blink event: fire a 200ms flash, do NOT leave blinkDetected=true per-frame
             if (blinkRes.blinkDetected) {
               setBlinkDetected(true);
               if (blinkDetectedClearTimerRef.current !== null) {
@@ -468,48 +483,36 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
               setBlinkCount(blinkRes.blinkCount);
               prevBlinkCountRef.current = blinkRes.blinkCount;
             }
-
             if (blinkRes.blinksPerMinute !== prevBlinksPerMinuteRef.current) {
               setBlinksPerMinute(blinkRes.blinksPerMinute);
               prevBlinksPerMinuteRef.current = blinkRes.blinksPerMinute;
             }
-
             if (blinkRes.blinkRateStatus !== prevBlinkRateStatusRef.current) {
               setBlinkRateStatus(blinkRes.blinkRateStatus);
               prevBlinkRateStatusRef.current = blinkRes.blinkRateStatus;
             }
-
             if (blinkRes.lowBlinkRate !== prevLowBlinkRateRef.current) {
               setLowBlinkRate(blinkRes.lowBlinkRate);
               prevLowBlinkRateRef.current = blinkRes.lowBlinkRate;
             }
-
-            // Timestamps: only update when count changes to avoid new array reference per frame
             if (blinkRes.blinkTimestamps.length !== prevTimestampCountRef.current) {
               setBlinkTimestamps([...blinkRes.blinkTimestamps]);
               prevTimestampCountRef.current = blinkRes.blinkTimestamps.length;
             }
-
-            // Observation progress: round to 2dp to halve update frequency
             const newProgress = Math.round(blinkRes.observationProgress * 100) / 100;
             if (newProgress !== prevObservationProgressRef.current) {
               setObservationProgress(newProgress);
               prevObservationProgressRef.current = newProgress;
             }
-
-            // Last blink timestamp
             if (blinkRes.lastBlinkTimestampMs !== prevLastBlinkTimestampRef.current) {
               setLastBlinkTimestampMs(blinkRes.lastBlinkTimestampMs);
               prevLastBlinkTimestampRef.current = blinkRes.lastBlinkTimestampMs;
             }
-
+            setTrackingStatus(blinkRes.trackingStatus);
           } else {
-            // Face missing or multi-person frame: reset transient eye closure states without resetting cumulative count
-            blinkDetectorRef.current.reset(false);
-            if (prevEyesClosedRef.current)                         { setEyesClosed(false);         prevEyesClosedRef.current        = false;  }
-            if (prevEyeStateRef.current !== 'OPEN')                { setEyeState('OPEN');           prevEyeStateRef.current          = 'OPEN'; }
-            if (prevStateMachineStateRef.current !== 'OPEN')       { setStateMachineState('OPEN');  prevStateMachineStateRef.current = 'OPEN'; }
-            if (prevLowBlinkRateRef.current)                       { setLowBlinkRate(false);        prevLowBlinkRateRef.current      = false;  }
+            blinkDetectorRef.current.update(null, adjustedTimestampMs);
+            setTrackingStatus('lost');
+            setLowBlinkRate(false);
           }
         }
 
@@ -519,24 +522,15 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
           fpsTimerRef.current.frames = 0;
           fpsTimerRef.current.lastTime = now;
         }
-
+      } catch (err) {
+        console.warn('PostureSync inference cycle warning:', err);
+      } finally {
         isProcessingRef.current = false;
       }
     }
 
-    // Animation frame pump for smooth 60fps rendering while tab is active
-    function onAnimationFrame() {
-      if (!isRunning) return;
-      executeInference();
-      animFrameIdRef.current = requestAnimationFrame(onAnimationFrame);
-    }
+    const CADENCE_MS = 100;
 
-    animFrameIdRef.current = requestAnimationFrame(onAnimationFrame);
-
-    // Background Tab Ticker:
-    // When the user switches to the secondary Demo tab, browsers throttle requestAnimationFrame to 0 or 1 FPS.
-    // A dedicated Web Worker timer continues firing every ~50ms uninterrupted in the background.
-    let backgroundWorker: Worker | null = null;
     try {
       const workerCode = `
         let timer = null;
@@ -545,7 +539,7 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
             if (!timer) {
               timer = setInterval(function() {
                 self.postMessage('tick');
-              }, 50); // ~20 FPS in background
+              }, ${CADENCE_MS});
             }
           } else if (e.data === 'stop') {
             if (timer) {
@@ -563,36 +557,27 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
       };
       backgroundWorker.postMessage('start');
       URL.revokeObjectURL(workerUrl);
-    } catch (err) {
-      console.warn('Could not start Web Worker background timer, falling back to interval:', err);
-      // Fallback interval if Worker creation fails
-      const fallbackInterval = setInterval(() => {
+    } catch {
+      timerId = setInterval(() => {
         executeInference();
-      }, 80);
-      return () => {
-        isRunning = false;
-        clearInterval(fallbackInterval);
-        if (animFrameIdRef.current !== null) {
-          cancelAnimationFrame(animFrameIdRef.current);
-          animFrameIdRef.current = null;
-        }
-        if (blinkDetectedClearTimerRef.current !== null) {
-          clearTimeout(blinkDetectedClearTimerRef.current);
-          blinkDetectedClearTimerRef.current = null;
-        }
-      };
+      }, CADENCE_MS);
     }
 
     return () => {
       isRunning = false;
-      if (animFrameIdRef.current !== null) {
-        cancelAnimationFrame(animFrameIdRef.current);
-        animFrameIdRef.current = null;
+      isProcessingRef.current = false;
+      if (timerId !== null) {
+        clearInterval(timerId);
+        timerId = null;
       }
       if (backgroundWorker) {
         backgroundWorker.postMessage('stop');
         backgroundWorker.terminate();
         backgroundWorker = null;
+      }
+      if (animFrameIdRef.current !== null) {
+        cancelAnimationFrame(animFrameIdRef.current);
+        animFrameIdRef.current = null;
       }
       if (canvas) {
         const ctx = canvas.getContext('2d');
@@ -600,7 +585,6 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
           ctx.clearRect(0, 0, canvas.width, canvas.height);
         }
       }
-      // Clean up pending blinkDetected flash timer on loop teardown
       if (blinkDetectedClearTimerRef.current !== null) {
         clearTimeout(blinkDetectedClearTimerRef.current);
         blinkDetectedClearTimerRef.current = null;
@@ -638,6 +622,7 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
     blinkTimestamps,
     observationProgress,
     lastBlinkTimestampMs,
+    trackingStatus,
   };
 }
 

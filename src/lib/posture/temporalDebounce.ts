@@ -2,13 +2,14 @@
  * temporalDebounce.ts
  *
  * PostureDebouncer: smooths the raw deviationScore using an EMA and only
- * fires a "posture bad" notification once the smoothed score has remained
- * above the trigger threshold for a sustained hold duration.  Recovery (clear)
- * is gated by a separate cooldown timer so a brief straightening-up does not
- * prematurely clear an active alert.
+ * fires an alert notification once the smoothed score has remained
+ * above the trigger threshold for a sustained hold duration (configurable, default 10s).
+ * Recovery (clear) is gated by a separate cooldown timer so a brief straightening-up
+ * does not prematurely clear an active alert.
  *
- * No per-user calibration — thresholds are fixed relative to the same
- * POSTURE_THRESHOLDS reference values used by classifyPosture().
+ * Hysteresis:
+ * - triggerThreshold: 0.30 (must exceed this to accumulate toward alert)
+ * - clearThreshold: 0.15 (must drop below this to enter recovery)
  */
 
 export interface DebouncerConfig {
@@ -35,14 +36,14 @@ export interface DebouncerConfig {
   /**
    * Milliseconds the smoothed score must be above triggerThreshold before
    * we fire the triggered callback.
-   * Default: 2500 ms
+   * Default: 10000 ms (10 seconds)
    */
   holdMs?: number;
 
   /**
    * Milliseconds the smoothed score must be below clearThreshold before we
    * fire the cleared callback and allow a new trigger cycle.
-   * Default: 3500 ms
+   * Default: 3500 ms (3.5 seconds)
    */
   cooldownMs?: number;
 }
@@ -65,7 +66,7 @@ const DEFAULTS: Required<DebouncerConfig> = {
   emaAlpha: 0.20,
   triggerThreshold: 0.30,
   clearThreshold: 0.15,
-  holdMs: 2500,
+  holdMs: 10000, // 10 seconds standard requirement
   cooldownMs: 3500,
 };
 
@@ -80,10 +81,28 @@ export class PostureDebouncer {
   private accumulatingStart: number | null = null;
   /** Timestamp when we entered recovering. */
   private recoveringStart: number | null = null;
+  /** Timestamp when we entered triggered. */
+  private triggeredStart: number | null = null;
 
   constructor(callbacks: DebouncerCallbacks, config: DebouncerConfig = {}) {
     this.config = { ...DEFAULTS, ...config };
     this.callbacks = callbacks;
+  }
+
+  /**
+   * Dynamically update hold duration (e.g. from popup configuration: 5s, 10s, 15s, etc.)
+   */
+  setHoldDuration(holdMs: number): void {
+    if (holdMs > 500) {
+      this.config.holdMs = holdMs;
+    }
+  }
+
+  /**
+   * Update full debouncer configuration.
+   */
+  updateConfig(newConfig: Partial<DebouncerConfig>): void {
+    this.config = { ...this.config, ...newConfig };
   }
 
   /**
@@ -126,6 +145,7 @@ export class PostureDebouncer {
           // Held long enough — fire!
           this.state = 'triggered';
           this.accumulatingStart = null;
+          this.triggeredStart = nowMs;
           this.callbacks.onTriggered(Number(s.toFixed(3)));
         }
         break;
@@ -152,6 +172,7 @@ export class PostureDebouncer {
           // Stayed clear long enough — fire cleared callback, back to idle
           this.state = 'idle';
           this.recoveringStart = null;
+          this.triggeredStart = null;
           this.callbacks.onCleared();
         }
         break;
@@ -159,12 +180,13 @@ export class PostureDebouncer {
     }
   }
 
-  /** Reset all state (e.g., when camera feed stops). */
+  /** Reset all state (e.g., when camera feed stops or mode switches). */
   reset(): void {
     this.smoothedScore = 0;
     this.state = 'idle';
     this.accumulatingStart = null;
     this.recoveringStart = null;
+    this.triggeredStart = null;
   }
 
   /** Read-only accessors for diagnostics / UI. */
@@ -175,4 +197,66 @@ export class PostureDebouncer {
   get currentState(): DebouncerState {
     return this.state;
   }
+
+  get configuredHoldMs(): number {
+    return this.config.holdMs;
+  }
+
+  /**
+   * Returns elapsed milliseconds while accumulating poor posture, or 0 if not accumulating.
+   */
+  getAccumulatingDuration(nowMs: number = Date.now()): number {
+    if (this.state === 'accumulating' && this.accumulatingStart !== null) {
+      return Math.max(0, nowMs - this.accumulatingStart);
+    }
+    if (this.state === 'triggered') {
+      return this.config.holdMs;
+    }
+    return 0;
+  }
+
+  /**
+   * Returns progressive blur level (0, 1, 2, 3), blur px (0, 3, 6, 11), and escalating warning messages.
+   */
+  getProgressiveAlert(nowMs: number = Date.now()): { alertLevel: number; blurPx: number; message: string } {
+    if (this.state === 'recovering') {
+      return {
+        alertLevel: 0,
+        blurPx: 0,
+        message: 'Good job! Your posture looks better. Keep comfortable and relaxed.'
+      };
+    }
+
+    if (this.state !== 'triggered' || this.triggeredStart === null) {
+      return { alertLevel: 0, blurPx: 0, message: '' };
+    }
+
+    const elapsedTriggered = Math.max(0, nowMs - this.triggeredStart);
+
+    // Initial warning: 0s to 10s after trigger (sustained poor posture for 10s - 20s total)
+    if (elapsedTriggered < 10000) {
+      return {
+        alertLevel: 1,
+        blurPx: 3,
+        message: 'Your posture seems to be slipping. Sit upright and relax your shoulders.'
+      };
+    }
+
+    // Continued poor posture: 10s to 20s after trigger (sustained poor posture for 20s - 30s total)
+    if (elapsedTriggered < 20000) {
+      return {
+        alertLevel: 2,
+        blurPx: 6,
+        message: 'Your posture has been off for a while. Please adjust your sitting position.'
+      };
+    }
+
+    // Persistent poor posture: > 20s after trigger (sustained poor posture for > 30s total)
+    return {
+      alertLevel: 3,
+      blurPx: 11,
+      message: 'Your posture has not improved. Take a short break and stretch before continuing.'
+    };
+  }
 }
+

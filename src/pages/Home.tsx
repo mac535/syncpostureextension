@@ -62,9 +62,6 @@ export const Home: React.FC = () => {
             <Link to="/dashboard" className="btn btn-primary">
               Open Posture Dashboard
             </Link>
-            <Link to="/demo" className="btn btn-secondary">
-              Open Demo Workspace
-            </Link>
           </div>
         </div>
 
@@ -815,7 +812,7 @@ export const Home: React.FC = () => {
               margin: 0
             }}
           >
-            Open the dashboard to inspect live posture telemetry, or launch the demo workspace to see how sustained deviation affects the target interface.
+            Open the dashboard to inspect live posture telemetry.
           </p>
         </div>
 
@@ -830,9 +827,6 @@ export const Home: React.FC = () => {
         >
           <Link to="/dashboard" className="btn btn-primary">
             Open Dashboard
-          </Link>
-          <Link to="/demo" className="btn btn-secondary">
-            Open Demo
           </Link>
         </div>
 

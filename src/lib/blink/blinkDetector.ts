@@ -164,7 +164,7 @@ export const DEFAULT_BLINK_CONFIG: BlinkDetectorConfig = {
   maxClosedDurationMs: 400,
   minTimeBetweenBlinksMs: 120,
   rollingWindowMs: 60000,
-  observationPeriodMs: 30000,
+  observationPeriodMs: 120000, // 2 minutes (120 seconds) observation period
   lowBlinkRateThreshold: 10,
   lowBlinkHoldMs: 3000,
   lowBlinkCooldownMs: 4000,
@@ -216,6 +216,7 @@ export interface BlinkDetectionResult {
   observationProgress: number; // 0.0 to 1.0 (for UI progress bars during collecting)
   lastBlinkDurationMs: number | null;
   lastBlinkTimestampMs: number | null;
+  trackingStatus: 'reliable' | 'unreliable' | 'lost';
 }
 
 /**
@@ -327,11 +328,13 @@ export class BlinkDetector {
     const { blinkRateStatus, blinksPerMinute, observationProgress } =
       this.computeRateMetrics(timestampMs);
 
-    // Update debounced low-blink alert condition
-    this.updateLowBlinkDebounce(blinksPerMinute, blinkRateStatus, timestampMs);
-
     // Handle missing/invalid face landmarks safely
     if (!faceLandmarks || faceLandmarks.length < 400) {
+      // Missing landmarks / lost tracking: cancel any low-blink accumulation and do not alert
+      this.lowBlinkDebounceState = 'normal';
+      this.lowBlinkAccumulatingStartMs = null;
+      this.lowBlinkRateAlert = false;
+
       return {
         leftEAR: this.lastValidLeftEAR,
         rightEAR: this.lastValidRightEAR,
@@ -343,14 +346,18 @@ export class BlinkDetector {
         blinkCount: this.blinkCount,
         blinksPerMinute,
         blinkRateStatus,
-        lowBlinkRate: this.lowBlinkRateAlert,
+        lowBlinkRate: false, // Never claim low blink rate when eye tracking is lost
         lowBlinkDebounceState: this.lowBlinkDebounceState,
         blinkTimestamps: [...this.blinkTimestamps],
         observationProgress,
         lastBlinkDurationMs: this.lastBlinkDurationMs,
         lastBlinkTimestampMs: this.lastBlinkTimestampMs,
+        trackingStatus: 'lost',
       };
     }
+
+    // Update debounced low-blink alert condition ONLY when landmarks are present and tracked
+    this.updateLowBlinkDebounce(blinksPerMinute, blinkRateStatus, timestampMs);
 
     // 1. Calculate individual eye EARs
     const leftEAR = computeEyeEAR(faceLandmarks, LEFT_EYE_LANDMARKS);
@@ -476,6 +483,7 @@ export class BlinkDetector {
       observationProgress,
       lastBlinkDurationMs: this.lastBlinkDurationMs,
       lastBlinkTimestampMs: this.lastBlinkTimestampMs,
+      trackingStatus: 'reliable',
     };
   }
 

@@ -35,6 +35,21 @@ export interface VisionPipelineStatus {
   fps: number;
 }
 
+const WASM_LOCAL_URL = typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL
+  ? chrome.runtime.getURL('wasm')
+  : '/wasm';
+
+// Route MediaPipe internal Emscripten C++ logs to console.debug instead of console.warn
+// to prevent noisy yellow warning stacks in browser DevTools.
+if (typeof window !== 'undefined') {
+  (window as unknown as { dbg?: (msg: string) => void }).dbg = (msg: string) => {
+    if (/error|failed/i.test(msg) && !/OpenGL error checking is disabled|NORM_RECT without IMAGE_DIMENSIONS/i.test(msg)) {
+      console.warn('[MediaPipe WASM]', msg);
+    } else {
+      console.debug('[MediaPipe WASM]', msg);
+    }
+  };
+}
 const WASM_CDN_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm';
 const POSE_MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
 const FACE_MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
@@ -45,20 +60,20 @@ let faceLandmarkerInstance: FaceLandmarker | null = null;
 let faceDetectorInstance: FaceDetector | null = null;
 let initPromise: Promise<{
   poseLandmarker: PoseLandmarker;
-  faceLandmarker: FaceLandmarker;
+  faceLandmarker: FaceLandmarker | null;
   faceDetector: FaceDetector | null;
 }> | null = null;
 
 /**
- * Initializes MediaPipe Tasks Vision FilesetResolver, PoseLandmarker, FaceLandmarker, and FaceDetector.
- * Reuses active instances to prevent double initialization during React StrictMode.
+ * Initializes MediaPipe Tasks Vision FilesetResolver and PoseLandmarker first,
+ * with non-blocking background initialization of secondary detectors.
  */
 export async function initializeMediaPipe(): Promise<{
   poseLandmarker: PoseLandmarker;
-  faceLandmarker: FaceLandmarker;
+  faceLandmarker: FaceLandmarker | null;
   faceDetector: FaceDetector | null;
 }> {
-  if (poseLandmarkerInstance && faceLandmarkerInstance) {
+  if (poseLandmarkerInstance) {
     return {
       poseLandmarker: poseLandmarkerInstance,
       faceLandmarker: faceLandmarkerInstance,
@@ -72,55 +87,66 @@ export async function initializeMediaPipe(): Promise<{
 
   initPromise = (async () => {
     try {
-      const vision = await FilesetResolver.forVisionTasks(WASM_CDN_URL);
-
-      const [poseLandmarker, faceLandmarker] = await Promise.all([
-        PoseLandmarker.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: POSE_MODEL_URL,
-            delegate: 'GPU'
-          },
-          runningMode: 'VIDEO',
-          numPoses: 1,
-          minPoseDetectionConfidence: 0.5,
-          minPosePresenceConfidence: 0.5,
-          minTrackingConfidence: 0.5
-        }),
-        FaceLandmarker.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: FACE_MODEL_URL,
-            delegate: 'GPU'
-          },
-          runningMode: 'VIDEO',
-          numFaces: 1,
-          minFaceDetectionConfidence: 0.5,
-          minFacePresenceConfidence: 0.5,
-          minTrackingConfidence: 0.5,
-          outputFaceBlendshapes: true
-        })
-      ]);
-
-      poseLandmarkerInstance = poseLandmarker;
-      faceLandmarkerInstance = faceLandmarker;
-
-      // Initialize FaceDetector with graceful fallback so failure doesn't crash the pipeline
+      let vision;
       try {
-        const faceDetector = await FaceDetector.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: FACE_DETECTOR_MODEL_URL,
-            delegate: 'GPU'
-          },
-          runningMode: 'VIDEO',
-          minDetectionConfidence: 0.5,
-          minSuppressionThreshold: 0.3
-        });
-        faceDetectorInstance = faceDetector;
-      } catch (detectorErr) {
-        console.warn('FaceDetector initialization failed, continuing without multi-person face detector:', detectorErr);
-        faceDetectorInstance = null;
+        vision = await FilesetResolver.forVisionTasks(WASM_LOCAL_URL);
+      } catch (localErr) {
+        console.warn('PostureSync: local WASM loading failed, falling back to CDN:', localErr);
+        vision = await FilesetResolver.forVisionTasks(WASM_CDN_URL);
       }
 
-      return { poseLandmarker, faceLandmarker, faceDetector: faceDetectorInstance };
+      // 1. Initialize PoseLandmarker (Core posture model: lightweight, GPU-accelerated)
+      const poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: POSE_MODEL_URL,
+          delegate: 'GPU'
+        },
+        runningMode: 'VIDEO',
+        numPoses: 1,
+        minPoseDetectionConfidence: 0.5,
+        minPosePresenceConfidence: 0.5,
+        minTrackingConfidence: 0.5
+      });
+      poseLandmarkerInstance = poseLandmarker;
+
+      // 2. Initialize FaceLandmarker in background without blocking posture readiness
+      FaceLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: FACE_MODEL_URL,
+          delegate: 'GPU'
+        },
+        runningMode: 'VIDEO',
+        numFaces: 1,
+        minFaceDetectionConfidence: 0.5,
+        minFacePresenceConfidence: 0.5,
+        minTrackingConfidence: 0.5,
+        outputFaceBlendshapes: false // Optimized: avoid 52 blendshapes compute overhead
+      })
+        .then((fl) => {
+          faceLandmarkerInstance = fl;
+        })
+        .catch((err) => {
+          console.warn('FaceLandmarker background initialization skipped:', err);
+        });
+
+      // 3. Initialize FaceDetector in background (relaxed multi-person tracking)
+      FaceDetector.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: FACE_DETECTOR_MODEL_URL,
+          delegate: 'GPU'
+        },
+        runningMode: 'VIDEO',
+        minDetectionConfidence: 0.5,
+        minSuppressionThreshold: 0.3
+      })
+        .then((fd) => {
+          faceDetectorInstance = fd;
+        })
+        .catch((err) => {
+          console.warn('FaceDetector background initialization skipped:', err);
+        });
+
+      return { poseLandmarker, faceLandmarker: faceLandmarkerInstance, faceDetector: faceDetectorInstance };
     } catch (err) {
       initPromise = null;
       throw err;
@@ -131,13 +157,14 @@ export async function initializeMediaPipe(): Promise<{
 }
 
 /**
- * Executes a single synchronized video frame inference for both Pose & Face landmarkers.
+ * Executes optimized video frame inference.
+ * Runs PoseLandmarker as primary pass; heavy FaceLandmarker is throttled to save CPU/GPU.
  */
 export function detectLandmarksForVideo(
   video: HTMLVideoElement,
   timestampMs: number
 ): VisionPipelineResults | null {
-  if (!poseLandmarkerInstance || !faceLandmarkerInstance) {
+  if (!poseLandmarkerInstance) {
     return null;
   }
 
@@ -146,8 +173,19 @@ export function detectLandmarksForVideo(
   }
 
   try {
+    // 1. Primary Pose Landmark Inference
     const poseResult = poseLandmarkerInstance.detectForVideo(video, timestampMs);
-    const faceResult = faceLandmarkerInstance.detectForVideo(video, timestampMs);
+
+    // 2. Face Landmark Inference for real Eye Aspect Ratio (EAR) blink tracking
+    let faceResult: FaceLandmarkerResult | null = null;
+    if (faceLandmarkerInstance) {
+      try {
+        faceResult = faceLandmarkerInstance.detectForVideo(video, timestampMs);
+      } catch (faceErr) {
+        // Safe fallback if face landmarker has transient issue
+        faceResult = null;
+      }
+    }
 
     return {
       poseResult,
@@ -161,8 +199,7 @@ export function detectLandmarksForVideo(
 }
 
 /**
- * Runs FaceDetector on a video frame to detect all visible faces.
- * Can be called at a lower cadence (e.g. 5-10 FPS).
+ * Runs FaceDetector at a relaxed cadence (e.g. 1-2 FPS / every 500-1000ms).
  */
 export function detectFacesForVideo(
   video: HTMLVideoElement,
@@ -204,7 +241,7 @@ export const POSE_CONNECTIONS: [number, number][] = [
 ];
 
 /**
- * Helper to render pose & face landmark points and connections onto a target 2D canvas context.
+ * Helper to render pose & face landmark points onto a target 2D canvas context.
  */
 export function drawLandmarksOnCanvas(
   ctx: CanvasRenderingContext2D,
@@ -217,7 +254,6 @@ export function drawLandmarksOnCanvas(
 
   // 1. Render Pose Skeleton
   if (poseLandmarks && poseLandmarks.length > 0) {
-    // Draw connections
     ctx.strokeStyle = '#38bdf8'; // Sky blue
     ctx.lineWidth = 2.5;
 
@@ -233,25 +269,24 @@ export function drawLandmarksOnCanvas(
     }
 
     // Draw landmark keypoint dots
+    ctx.fillStyle = '#10b981'; // Emerald
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.2;
+
     for (const lm of poseLandmarks) {
       if ((lm.visibility ?? 1) > 0.4) {
         ctx.beginPath();
         ctx.arc(lm.x * width, lm.y * height, 4, 0, 2 * Math.PI);
-        ctx.fillStyle = '#10b981'; // Emerald
         ctx.fill();
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1.2;
         ctx.stroke();
       }
     }
   }
 
-  // 2. Render Face Mesh / Key Points (subtle, lightweight developer dots)
+  // 2. Render Face Mesh (sampled lightly to avoid draw call overhead)
   if (faceLandmarks && faceLandmarks.length > 0) {
-    // Render key facial contour dots
-    ctx.fillStyle = 'rgba(244, 63, 94, 0.75)'; // Coral rose
-    // Draw subsampled face mesh landmarks for smooth real-time performance
-    const step = 4; // Sample every 4th landmark for clean debug view
+    ctx.fillStyle = 'rgba(244, 63, 94, 0.75)';
+    const step = 6;
     for (let i = 0; i < faceLandmarks.length; i += step) {
       const lm = faceLandmarks[i];
       ctx.beginPath();
@@ -262,8 +297,7 @@ export function drawLandmarksOnCanvas(
 }
 
 /**
- * Helper to render detected face bounding boxes and numbered markers onto target 2D canvas context.
- * Used when personCount >= 2 for multi-person tracking.
+ * Helper to render detected face bounding boxes.
  */
 export function drawFaceBoxesOnCanvas(
   ctx: CanvasRenderingContext2D,
@@ -277,12 +311,10 @@ export function drawFaceBoxesOnCanvas(
     const box = faceBoxes[idx];
     const numStr = String(idx + 1).padStart(2, '0');
 
-    // Technical bounding box with corner accents
-    ctx.strokeStyle = 'rgba(79, 216, 196, 0.7)'; // teal accent
+    ctx.strokeStyle = 'rgba(79, 216, 196, 0.7)';
     ctx.lineWidth = 1.5;
     ctx.strokeRect(box.originX, box.originY, box.width, box.height);
 
-    // Numbered marker tag (e.g. 01, 02)
     const tagWidth = 32;
     const tagHeight = 16;
     const tagX = box.originX;
@@ -290,7 +322,7 @@ export function drawFaceBoxesOnCanvas(
 
     ctx.fillStyle = 'rgba(7, 18, 32, 0.9)';
     ctx.fillRect(tagX, tagY, tagWidth, tagHeight);
-    ctx.strokeStyle = 'var(--signal-good, #4fd8c4)';
+    ctx.strokeStyle = '#4fd8c4';
     ctx.lineWidth = 1;
     ctx.strokeRect(tagX, tagY, tagWidth, tagHeight);
 

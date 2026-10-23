@@ -1,21 +1,28 @@
 import type { PostureMetrics } from './postureMetrics';
+import type { PostureBaseline } from './calibration';
 
 /**
- * Baseline posture thresholds for preliminary classification.
+ * Baseline ergonomic posture deviation thresholds relative to reference/calibrated upright posture.
  */
 export const POSTURE_THRESHOLDS = {
   MIN_CONFIDENCE: 0.25,
   
-  // Forward slouching thresholds
-  HEAD_FORWARD_MILD: 0.16,
-  HEAD_FORWARD_SIGNIFICANT: 0.26,
-  HEAD_FORWARD_SEVERE: 0.38,
+  // Forward slouching thresholds (relative offset from baseline)
+  HEAD_FORWARD_MILD: 0.14,
+  HEAD_FORWARD_SIGNIFICANT: 0.24,
+  HEAD_FORWARD_SEVERE: 0.36,
 
-  HEAD_TORSO_ANGLE_MILD: 18.0,
-  HEAD_TORSO_ANGLE_SIGNIFICANT: 28.0,
-  HEAD_TORSO_ANGLE_SEVERE: 38.0,
+  HEAD_TORSO_ANGLE_MILD: 15.0,
+  HEAD_TORSO_ANGLE_SIGNIFICANT: 25.0,
+  HEAD_TORSO_ANGLE_SEVERE: 36.0,
 
-  // Lateral leaning thresholds
+  // Forward leaning toward screen (scale expansion ratio relative to baseline shoulder width)
+  // Note: Approximated via visual scale expansion; 2D webcam cannot measure physical depth directly.
+  SCREEN_LEAN_RATIO_MILD: 0.18,
+  SCREEN_LEAN_RATIO_SIGNIFICANT: 0.28,
+  SCREEN_LEAN_RATIO_SEVERE: 0.40,
+
+  // Lateral leaning thresholds (degrees deviation from baseline)
   LATERAL_TILT_MILD: 6.0,
   LATERAL_TILT_SIGNIFICANT: 12.0,
   LATERAL_TILT_SEVERE: 18.0,
@@ -37,10 +44,12 @@ export interface PostureClassification {
 
 /**
  * Computes a continuous deviation score from 0.0 (reference posture) to 1.0 (maximum deviation).
- * Interpolates each available metric linearly between its MILD and SEVERE thresholds,
- * clamped to [0, 1], and returns the maximum contribution across all metrics.
+ * When a baseline is supplied, deviations are measured relatively against the calibrated sitting posture.
  */
-export function computeDeviationScore(metrics: PostureMetrics): number {
+export function computeDeviationScore(
+  metrics: PostureMetrics,
+  baseline?: PostureBaseline | null
+): number {
   if (!metrics.isValid || metrics.confidence < POSTURE_THRESHOLDS.MIN_CONFIDENCE) {
     return 0;
   }
@@ -54,12 +63,19 @@ export function computeDeviationScore(metrics: PostureMetrics): number {
     return (val - mild) / (severe - mild);
   };
 
-  // 1. Lateral Tilt contribution
+  const baseShoulderTilt = baseline?.isCalibrated ? baseline.shoulderTiltDeg : 0;
+  const baseLateralTilt = baseline?.isCalibrated ? baseline.lateralTiltDeg : 0;
+  const baseHeadForward = baseline?.isCalibrated ? baseline.headForwardOffset : 0;
+  const baseHeadAngle = baseline?.isCalibrated ? baseline.headTorsoAngleDeg : 0;
+  const baseShoulderWidth = baseline?.isCalibrated ? baseline.shoulderWidth : null;
+
+  // 1. Relative Lateral Tilt contribution
   if (metrics.lateralTiltDeg !== null) {
+    const relLateralTilt = Math.abs(metrics.lateralTiltDeg - baseLateralTilt);
     scores.push(
       clamp01(
         calcLinearRatio(
-          metrics.lateralTiltDeg,
+          relLateralTilt,
           POSTURE_THRESHOLDS.LATERAL_TILT_MILD,
           POSTURE_THRESHOLDS.LATERAL_TILT_SEVERE
         )
@@ -67,12 +83,13 @@ export function computeDeviationScore(metrics: PostureMetrics): number {
     );
   }
 
-  // 2. Shoulder Tilt contribution
+  // 2. Relative Shoulder Tilt contribution
   if (metrics.shoulderTiltDeg !== null) {
+    const relShoulderTilt = Math.abs(metrics.shoulderTiltDeg - baseShoulderTilt);
     scores.push(
       clamp01(
         calcLinearRatio(
-          metrics.shoulderTiltDeg,
+          relShoulderTilt,
           POSTURE_THRESHOLDS.SHOULDER_TILT_MILD,
           POSTURE_THRESHOLDS.SHOULDER_TILT_SEVERE
         )
@@ -80,12 +97,13 @@ export function computeDeviationScore(metrics: PostureMetrics): number {
     );
   }
 
-  // 3. Head Forward Offset contribution
+  // 3. Relative Head Forward Offset contribution
   if (metrics.headForwardOffset !== null) {
+    const relHeadForward = Math.max(0, metrics.headForwardOffset - baseHeadForward);
     scores.push(
       clamp01(
         calcLinearRatio(
-          metrics.headForwardOffset,
+          relHeadForward,
           POSTURE_THRESHOLDS.HEAD_FORWARD_MILD,
           POSTURE_THRESHOLDS.HEAD_FORWARD_SEVERE
         )
@@ -93,17 +111,34 @@ export function computeDeviationScore(metrics: PostureMetrics): number {
     );
   }
 
-  // 4. Head-Torso Angle contribution
+  // 4. Relative Head-Torso Angle contribution
   if (metrics.headTorsoAngleDeg !== null) {
+    const relHeadAngle = Math.abs(metrics.headTorsoAngleDeg - baseHeadAngle);
     scores.push(
       clamp01(
         calcLinearRatio(
-          metrics.headTorsoAngleDeg,
+          relHeadAngle,
           POSTURE_THRESHOLDS.HEAD_TORSO_ANGLE_MILD,
           POSTURE_THRESHOLDS.HEAD_TORSO_ANGLE_SEVERE
         )
       )
     );
+  }
+
+  // 5. Forward Screen Lean (torso leaning toward display estimated by shoulder scale expansion)
+  if (metrics.shoulderWidth !== null && baseShoulderWidth && baseShoulderWidth > 0.08) {
+    const scaleRatio = (metrics.shoulderWidth - baseShoulderWidth) / baseShoulderWidth;
+    if (scaleRatio > 0) {
+      scores.push(
+        clamp01(
+          calcLinearRatio(
+            scaleRatio,
+            POSTURE_THRESHOLDS.SCREEN_LEAN_RATIO_MILD,
+            POSTURE_THRESHOLDS.SCREEN_LEAN_RATIO_SEVERE
+          )
+        )
+      );
+    }
   }
 
   if (scores.length === 0) {
@@ -119,8 +154,11 @@ export function computeDeviationScore(metrics: PostureMetrics): number {
  * Classifies posture metrics into ergonomic states (good, slouching, leaning, or insufficient_data)
  * and computes continuous deviationScore alongside discrete severity.
  */
-export function classifyPosture(metrics: PostureMetrics): PostureClassification {
-  const deviationScore = computeDeviationScore(metrics);
+export function classifyPosture(
+  metrics: PostureMetrics,
+  baseline?: PostureBaseline | null
+): PostureClassification {
+  const deviationScore = computeDeviationScore(metrics, baseline);
 
   // 1. Check data sufficiency & presence
   if (!metrics.isValid || metrics.confidence < POSTURE_THRESHOLDS.MIN_CONFIDENCE) {
@@ -132,11 +170,25 @@ export function classifyPosture(metrics: PostureMetrics): PostureClassification 
     };
   }
 
-  // Check if at least one primary posture angle is calculable
-  const hasLateral = metrics.lateralTiltDeg !== null;
-  const hasShoulder = metrics.shoulderTiltDeg !== null;
-  const hasHeadOffset = metrics.headForwardOffset !== null;
-  const hasHeadAngle = metrics.headTorsoAngleDeg !== null;
+  const baseShoulderTilt = baseline?.isCalibrated ? baseline.shoulderTiltDeg : 0;
+  const baseLateralTilt = baseline?.isCalibrated ? baseline.lateralTiltDeg : 0;
+  const baseHeadForward = baseline?.isCalibrated ? baseline.headForwardOffset : 0;
+  const baseHeadAngle = baseline?.isCalibrated ? baseline.headTorsoAngleDeg : 0;
+  const baseShoulderWidth = baseline?.isCalibrated ? baseline.shoulderWidth : null;
+
+  // Relative measurements
+  const relLateralTilt = metrics.lateralTiltDeg !== null ? Math.abs(metrics.lateralTiltDeg - baseLateralTilt) : null;
+  const relShoulderTilt = metrics.shoulderTiltDeg !== null ? Math.abs(metrics.shoulderTiltDeg - baseShoulderTilt) : null;
+  const relHeadOffset = metrics.headForwardOffset !== null ? Math.max(0, metrics.headForwardOffset - baseHeadForward) : null;
+  const relHeadAngle = metrics.headTorsoAngleDeg !== null ? Math.abs(metrics.headTorsoAngleDeg - baseHeadAngle) : null;
+  const screenLeanRatio = (metrics.shoulderWidth !== null && baseShoulderWidth && baseShoulderWidth > 0.08)
+    ? (metrics.shoulderWidth - baseShoulderWidth) / baseShoulderWidth
+    : null;
+
+  const hasLateral = relLateralTilt !== null;
+  const hasShoulder = relShoulderTilt !== null;
+  const hasHeadOffset = relHeadOffset !== null;
+  const hasHeadAngle = relHeadAngle !== null;
 
   if (!hasLateral && !hasShoulder && !hasHeadOffset && !hasHeadAngle) {
     return {
@@ -149,8 +201,8 @@ export function classifyPosture(metrics: PostureMetrics): PostureClassification 
 
   // 2. Evaluate Lateral Leaning Severity
   let leanSeverity: PostureSeverity = 0;
-  const lateralTilt = metrics.lateralTiltDeg ?? 0;
-  const shoulderTilt = metrics.shoulderTiltDeg ?? 0;
+  const lateralTilt = relLateralTilt ?? 0;
+  const shoulderTilt = relShoulderTilt ?? 0;
 
   if (
     (hasLateral && lateralTilt >= POSTURE_THRESHOLDS.LATERAL_TILT_SEVERE) ||
@@ -169,24 +221,28 @@ export function classifyPosture(metrics: PostureMetrics): PostureClassification 
     leanSeverity = 1;
   }
 
-  // 3. Evaluate Forward Slouching Severity
+  // 3. Evaluate Forward Slouching / Forward Screen Leaning Severity
   let slouchSeverity: PostureSeverity = 0;
-  const headOffset = metrics.headForwardOffset ?? 0;
-  const headAngle = metrics.headTorsoAngleDeg ?? 0;
+  const headOffset = relHeadOffset ?? 0;
+  const headAngle = relHeadAngle ?? 0;
+  const leanForward = screenLeanRatio ?? 0;
 
   if (
     (hasHeadOffset && headOffset >= POSTURE_THRESHOLDS.HEAD_FORWARD_SEVERE) ||
-    (hasHeadAngle && headAngle >= POSTURE_THRESHOLDS.HEAD_TORSO_ANGLE_SEVERE)
+    (hasHeadAngle && headAngle >= POSTURE_THRESHOLDS.HEAD_TORSO_ANGLE_SEVERE) ||
+    leanForward >= POSTURE_THRESHOLDS.SCREEN_LEAN_RATIO_SEVERE
   ) {
     slouchSeverity = 3;
   } else if (
     (hasHeadOffset && headOffset >= POSTURE_THRESHOLDS.HEAD_FORWARD_SIGNIFICANT) ||
-    (hasHeadAngle && headAngle >= POSTURE_THRESHOLDS.HEAD_TORSO_ANGLE_SIGNIFICANT)
+    (hasHeadAngle && headAngle >= POSTURE_THRESHOLDS.HEAD_TORSO_ANGLE_SIGNIFICANT) ||
+    leanForward >= POSTURE_THRESHOLDS.SCREEN_LEAN_RATIO_SIGNIFICANT
   ) {
     slouchSeverity = 2;
   } else if (
     (hasHeadOffset && headOffset >= POSTURE_THRESHOLDS.HEAD_FORWARD_MILD) ||
-    (hasHeadAngle && headAngle >= POSTURE_THRESHOLDS.HEAD_TORSO_ANGLE_MILD)
+    (hasHeadAngle && headAngle >= POSTURE_THRESHOLDS.HEAD_TORSO_ANGLE_MILD) ||
+    leanForward >= POSTURE_THRESHOLDS.SCREEN_LEAN_RATIO_MILD
   ) {
     slouchSeverity = 1;
   }
@@ -197,15 +253,15 @@ export function classifyPosture(metrics: PostureMetrics): PostureClassification 
       status: 'good',
       severity: 0,
       deviationScore,
-      reason: 'Upright and well aligned'
+      reason: 'Upright and well aligned with baseline'
     };
   }
 
   if (leanSeverity >= slouchSeverity && leanSeverity > 0) {
     const directionStr = metrics.leanDirection !== 'neutral' ? ` (${metrics.leanDirection})` : '';
     const details = [
-      hasLateral ? `Torso tilt: ${metrics.lateralTiltDeg}°${directionStr}` : null,
-      hasShoulder ? `Shoulder tilt: ${metrics.shoulderTiltDeg}°` : null
+      hasLateral ? `Torso tilt: ${relLateralTilt?.toFixed(1)}°${directionStr}` : null,
+      hasShoulder ? `Shoulder tilt: ${relShoulderTilt?.toFixed(1)}°` : null
     ].filter(Boolean).join(', ');
 
     return {
@@ -216,15 +272,16 @@ export function classifyPosture(metrics: PostureMetrics): PostureClassification 
     };
   } else {
     const details = [
-      hasHeadOffset ? `Head offset: ${metrics.headForwardOffset}` : null,
-      hasHeadAngle ? `Head-torso angle: ${metrics.headTorsoAngleDeg}°` : null
+      hasHeadOffset ? `Head offset: ${relHeadOffset?.toFixed(2)}` : null,
+      hasHeadAngle ? `Neck angle: ${relHeadAngle?.toFixed(1)}°` : null,
+      leanForward > 0.15 ? `Forward screen lean: +${(leanForward * 100).toFixed(0)}%` : null
     ].filter(Boolean).join(', ');
 
     return {
       status: 'slouching',
       severity: slouchSeverity,
       deviationScore,
-      reason: details || 'Forward head slouch detected'
+      reason: details || 'Forward head slouch or screen lean detected'
     };
   }
 }
