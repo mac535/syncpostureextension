@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import type { PostureStatus } from '../lib/posture/postureClassifier';
 import type { DebouncerState } from '../lib/posture/temporalDebounce';
-import type { PostureSettings } from '../extension/types';
+import type { MonitoringStatus, PostureSettings } from '../extension/types';
 import { DEFAULT_SETTINGS } from '../extension/types';
 import { loadBaseline, clearBaseline, type PostureBaseline } from '../lib/posture/calibration';
 import { playPostureChime } from '../lib/audio/chime';
@@ -24,6 +24,7 @@ import {
 
 export const Popup: React.FC = () => {
   const [monitoringActive, setMonitoringActive] = useState<boolean>(false);
+  const [monitoringStatus, setMonitoringStatus] = useState<MonitoringStatus>('stopped');
   const [status, setStatus] = useState<PostureStatus>('good');
   const [intensity, setIntensity] = useState<number>(0);
   const [debouncerState, setDebouncerState] = useState<DebouncerState>('idle');
@@ -47,37 +48,59 @@ export const Popup: React.FC = () => {
   const [breakRemainingMs, setBreakRemainingMs] = useState<number>(0);
   const [isBreakActive, setIsBreakActive] = useState<boolean>(false);
   const [isCalibrating, setIsCalibrating] = useState<boolean>(false);
+  const [isSuspended, setIsSuspended] = useState<boolean>(false);
 
-  // Poll status from background service worker every 400ms while popup is open
+  // Freshness and monotonic sequence guards to reject out-of-order messages
+  const latestSequenceRef = useRef<number>(0);
+  const latestTimestampRef = useRef<number>(0);
+
+  // Event-driven state updates with relaxed bounded refresh (2500ms fallback)
   useEffect(() => {
+    function applyStatusResponse(res: any) {
+      if (!res || res.type !== 'STATUS_RESPONSE') return;
+
+      // Reject out-of-order status responses
+      if (typeof res.sequenceNumber === 'number' && res.sequenceNumber < latestSequenceRef.current) return;
+      if (typeof res.timestamp === 'number' && res.timestamp < latestTimestampRef.current) return;
+      if (typeof res.sequenceNumber === 'number') latestSequenceRef.current = res.sequenceNumber;
+      if (typeof res.timestamp === 'number') latestTimestampRef.current = res.timestamp;
+
+      if (typeof res.monitoringActive === 'boolean') setMonitoringActive(res.monitoringActive);
+
+      const isSuspendedVal = Boolean(res.isSuspended || res.monitoringStatus === 'suspended');
+      setIsSuspended(isSuspendedVal);
+
+      const mStatus: MonitoringStatus =
+        res.monitoringStatus ||
+        (isSuspendedVal ? 'suspended' : res.monitoringActive ? 'running' : 'stopped');
+      setMonitoringStatus(mStatus);
+
+      if (res.status) setStatus(res.status);
+      if (typeof res.intensity === 'number') setIntensity(res.intensity);
+      if (res.debouncerState) setDebouncerState(res.debouncerState);
+      if (typeof res.accumulatingMs === 'number') setAccumulatingMs(res.accumulatingMs);
+      if (typeof res.holdMs === 'number') setHoldMs(res.holdMs);
+      if (typeof res.isAlertActive === 'boolean') setIsAlertActive(res.isAlertActive);
+      if (res.settings) setSettings(res.settings);
+      if (res.alertLevel !== undefined) setAlertLevel(res.alertLevel);
+      if (res.blurPx !== undefined) setBlurPx(res.blurPx);
+      if (res.alertMessage !== undefined) setAlertMessage(res.alertMessage);
+      if (res.blinkCount !== undefined) setBlinkCount(res.blinkCount);
+      if (res.blinksPerMinute !== undefined) setBlinksPerMinute(res.blinksPerMinute);
+      if (res.blinkRateStatus) setBlinkRateStatus(res.blinkRateStatus);
+      if (res.poseDetected !== undefined) setPoseDetected(res.poseDetected);
+      if (res.observationProgress !== undefined) setObservationProgress(res.observationProgress);
+      if (res.trackingStatus !== undefined) setTrackingStatus(res.trackingStatus);
+      if (res.breakRemainingMs !== undefined) setBreakRemainingMs(res.breakRemainingMs);
+      if (res.isBreakActive !== undefined) setIsBreakActive(res.isBreakActive);
+    }
+
     async function fetchStatus() {
       if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
         try {
           chrome.runtime.sendMessage({ type: 'GET_STATUS' }, (res) => {
             if (chrome.runtime.lastError) return;
-            if (res && res.type === 'STATUS_RESPONSE') {
-              setMonitoringActive(res.monitoringActive);
-              setStatus(res.status);
-              setIntensity(res.intensity);
-              setDebouncerState(res.debouncerState);
-              setAccumulatingMs(res.accumulatingMs);
-              setHoldMs(res.holdMs);
-              setIsAlertActive(res.isAlertActive);
-              if (res.settings) {
-                setSettings(res.settings);
-              }
-              if (res.alertLevel !== undefined) setAlertLevel(res.alertLevel);
-              if (res.blurPx !== undefined) setBlurPx(res.blurPx);
-              if (res.alertMessage !== undefined) setAlertMessage(res.alertMessage);
-              if (res.blinkCount !== undefined) setBlinkCount(res.blinkCount);
-              if (res.blinksPerMinute !== undefined) setBlinksPerMinute(res.blinksPerMinute);
-              if (res.blinkRateStatus) setBlinkRateStatus(res.blinkRateStatus);
-              if (res.poseDetected !== undefined) setPoseDetected(res.poseDetected);
-              if (res.observationProgress !== undefined) setObservationProgress(res.observationProgress);
-              if (res.trackingStatus !== undefined) setTrackingStatus(res.trackingStatus);
-              if (res.breakRemainingMs !== undefined) setBreakRemainingMs(res.breakRemainingMs);
-              if (res.isBreakActive !== undefined) setIsBreakActive(res.isBreakActive);
-            }
+            applyStatusResponse(res);
           });
         } catch {
           // Ignore polling errors
@@ -85,20 +108,167 @@ export const Popup: React.FC = () => {
       }
     }
 
+    // 1. Initial snapshot fetch on popup open
     fetchStatus();
-    const interval = setInterval(fetchStatus, 400);
 
-    // Also load baseline
+    // 2. Load baseline calibration
     loadBaseline().then((b) => {
       if (b.isCalibrated) setBaseline(b);
     });
 
-    return () => clearInterval(interval);
+    // 3. Event-driven message listener for push updates
+    const handleRuntimeMessage = (message: any) => {
+      if (!message || !message.type) return;
+
+      switch (message.type) {
+        case 'POSTURE_TELEMETRY': {
+          const payload = message.payload || message;
+          if (typeof payload.sequenceNumber === 'number' && payload.sequenceNumber < latestSequenceRef.current) return;
+          if (typeof payload.timestamp === 'number' && payload.timestamp < latestTimestampRef.current) return;
+          if (typeof payload.sequenceNumber === 'number') latestSequenceRef.current = payload.sequenceNumber;
+          if (typeof payload.timestamp === 'number') latestTimestampRef.current = payload.timestamp;
+
+          const mStatus: MonitoringStatus =
+            payload.monitoringStatus || (payload.isSuspended ? 'suspended' : 'running');
+          setMonitoringStatus(mStatus);
+          setIsSuspended(mStatus === 'suspended');
+          setMonitoringActive(mStatus !== 'stopped');
+
+          if (payload.status) setStatus(payload.status);
+          if (typeof payload.intensity === 'number') setIntensity(payload.intensity);
+          if (typeof payload.poseDetected === 'boolean') setPoseDetected(payload.poseDetected);
+          if (payload.debouncerState) setDebouncerState(payload.debouncerState);
+          if (typeof payload.accumulatingMs === 'number') {
+            setAccumulatingMs(payload.accumulatingMs);
+          }
+          if (typeof payload.holdMs === 'number') {
+            setHoldMs(payload.holdMs);
+          }
+          if (typeof payload.alertLevel === 'number') {
+            setAlertLevel(payload.alertLevel);
+            setIsAlertActive(payload.alertLevel > 0);
+          }
+          if (typeof payload.blurPx === 'number') setBlurPx(payload.blurPx);
+          if (typeof payload.alertMessage === 'string') setAlertMessage(payload.alertMessage);
+
+          if (typeof payload.blinkCount === 'number') {
+            setBlinkCount(payload.blinkCount);
+          }
+          if (payload.blinksPerMinute !== undefined) {
+            setBlinksPerMinute(payload.blinksPerMinute);
+          }
+          if (payload.blinkRateStatus) {
+            setBlinkRateStatus(payload.blinkRateStatus);
+          }
+          if (typeof payload.observationProgress === 'number') {
+            setObservationProgress(payload.observationProgress);
+          }
+          if (payload.trackingStatus) {
+            setTrackingStatus(payload.trackingStatus);
+          }
+          break;
+        }
+
+        case 'PROGRESSIVE_ALERT_UPDATE':
+          if (typeof message.level === 'number') setAlertLevel(message.level);
+          if (typeof message.blurPx === 'number') setBlurPx(message.blurPx);
+          if (typeof message.message === 'string') setAlertMessage(message.message);
+          setIsAlertActive(message.level > 0);
+          break;
+
+        case 'POSTURE_RESTORED':
+          setAlertLevel(0);
+          setBlurPx(0);
+          setAlertMessage('');
+          setIsAlertActive(false);
+          setStatus('good');
+          break;
+
+        case 'MONITORING_STARTED':
+          setMonitoringActive(true);
+          setMonitoringStatus('initializing');
+          setIsSuspended(false);
+          break;
+
+        case 'MONITORING_STOPPED':
+          setMonitoringActive(false);
+          setMonitoringStatus('stopped');
+          setIsSuspended(false);
+          break;
+
+        case 'BREAK_REMINDER':
+          setIsBreakActive(true);
+          break;
+
+        case 'BREAK_REMINDER_CLEARED':
+          setIsBreakActive(false);
+          break;
+
+        case 'APPLICATION_FOCUS_LIFECYCLE': {
+          if (typeof message.sequenceNumber === 'number' && message.sequenceNumber < latestSequenceRef.current) return;
+          if (typeof message.timestamp === 'number' && message.timestamp < latestTimestampRef.current) return;
+          if (typeof message.sequenceNumber === 'number') latestSequenceRef.current = message.sequenceNumber;
+          if (typeof message.timestamp === 'number') latestTimestampRef.current = message.timestamp;
+
+          if (message.action === 'SUSPEND') {
+            setIsSuspended(true);
+            setMonitoringStatus('suspended');
+            setBlinksPerMinute(null);
+            setIntensity(0);
+            setAlertLevel(0);
+            setBlurPx(0);
+            setAlertMessage('');
+            setIsAlertActive(false);
+          } else if (message.action === 'RESUME') {
+            setIsSuspended(false);
+            setMonitoringStatus('initializing');
+          } else if (message.action === 'STOP') {
+            setIsSuspended(false);
+            setMonitoringActive(false);
+            setMonitoringStatus('stopped');
+          }
+          break;
+        }
+
+        case 'UPDATE_SETTINGS':
+          if (message.settings) {
+            setSettings((prev) => ({ ...prev, ...message.settings }));
+          }
+          break;
+
+        case 'CALIBRATION_COMPLETED':
+          loadBaseline().then((b) => {
+            if (b.isCalibrated) setBaseline(b);
+          });
+          break;
+      }
+    };
+
+    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+      chrome.runtime.onMessage.addListener(handleRuntimeMessage);
+    }
+
+    // 4. Bounded fallback refresh every 2500ms
+    const fallbackInterval = setInterval(fetchStatus, 2500);
+
+    return () => {
+      clearInterval(fallbackInterval);
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+        chrome.runtime.onMessage.removeListener(handleRuntimeMessage);
+      }
+    };
   }, []);
 
   const handleToggleMonitoring = () => {
     const nextState = !monitoringActive;
     setMonitoringActive(nextState);
+    if (!nextState) {
+      setMonitoringStatus('stopped');
+      setIsSuspended(false);
+    } else {
+      setMonitoringStatus('initializing');
+      setIsSuspended(false);
+    }
 
     if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
       chrome.runtime.sendMessage({
@@ -227,12 +397,28 @@ export const Popup: React.FC = () => {
 
   // Status badge details
   const getStatusBadge = () => {
-    if (!monitoringActive) {
+    if (monitoringStatus === 'stopped' || !monitoringActive) {
       return {
         label: 'MONITORING PAUSED',
         color: '#94a3b8',
         bg: 'rgba(148, 163, 184, 0.1)',
         border: 'rgba(148, 163, 184, 0.25)'
+      };
+    }
+    if (monitoringStatus === 'suspended' || isSuspended) {
+      return {
+        label: 'SUSPENDED (EDGE UNFOCUSED)',
+        color: '#38bdf8',
+        bg: 'rgba(56, 189, 248, 0.15)',
+        border: 'rgba(56, 189, 248, 0.35)'
+      };
+    }
+    if (monitoringStatus === 'initializing') {
+      return {
+        label: 'INITIALIZING SENSORS...',
+        color: '#38bdf8',
+        bg: 'rgba(56, 189, 248, 0.15)',
+        border: 'rgba(56, 189, 248, 0.35)'
       };
     }
     const isLean = status === 'leaning';
@@ -287,7 +473,8 @@ export const Popup: React.FC = () => {
   };
 
   const badge = getStatusBadge();
-  const deviationPercent = Math.min(100, Math.round(intensity * 100));
+  const isLiveMonitoring = monitoringStatus === 'running' && !isSuspended;
+  const deviationPercent = isLiveMonitoring ? Math.min(100, Math.round(intensity * 100)) : 0;
 
   return (
     <div
@@ -318,8 +505,8 @@ export const Popup: React.FC = () => {
               width: '9px',
               height: '9px',
               borderRadius: '50%',
-              backgroundColor: monitoringActive ? '#10b981' : '#64748b',
-              boxShadow: monitoringActive ? '0 0 10px #10b981' : 'none'
+              backgroundColor: isLiveMonitoring ? '#10b981' : monitoringStatus === 'suspended' ? '#38bdf8' : '#64748b',
+              boxShadow: isLiveMonitoring ? '0 0 10px #10b981' : monitoringStatus === 'suspended' ? '0 0 8px #38bdf8' : 'none'
             }}
           />
           <h1 style={{ fontSize: '16px', fontWeight: 700, margin: 0, letterSpacing: '0.02em' }}>
@@ -401,7 +588,7 @@ export const Popup: React.FC = () => {
             >
               {badge.label}
             </div>
-            {alertMessage && alertLevel > 0 && (
+            {alertMessage && alertLevel > 0 && isLiveMonitoring && (
               <div style={{ fontSize: '10px', color: '#fca5a5', marginTop: '4px', maxWidth: '210px', lineHeight: 1.3 }}>
                 {alertMessage}
               </div>
@@ -444,14 +631,20 @@ export const Popup: React.FC = () => {
         <div style={{ marginTop: '8px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#94a3b8', marginBottom: '4px' }}>
             <span>Posture Deviation</span>
-            <span style={{ fontWeight: 600, color: deviationPercent > 30 ? '#f43f5e' : '#10b981' }}>
-              {deviationPercent}%
+            <span style={{ fontWeight: 600, color: !isLiveMonitoring ? '#94a3b8' : deviationPercent > 30 ? '#f43f5e' : '#10b981' }}>
+              {monitoringStatus === 'suspended'
+                ? '―% (Paused)'
+                : monitoringStatus === 'initializing'
+                ? '―% (Initializing)'
+                : monitoringStatus === 'stopped'
+                ? '0%'
+                : `${deviationPercent}%`}
             </span>
           </div>
           <div style={{ width: '100%', height: '6px', background: 'rgba(255, 255, 255, 0.08)', borderRadius: '3px', overflow: 'hidden' }}>
             <div
               style={{
-                width: `${deviationPercent}%`,
+                width: isLiveMonitoring ? `${deviationPercent}%` : '0%',
                 height: '100%',
                 backgroundColor: deviationPercent > 40 ? '#f43f5e' : deviationPercent > 20 ? '#fbbf24' : '#10b981',
                 transition: 'width 0.3s ease, background-color 0.3s ease'
@@ -483,13 +676,25 @@ export const Popup: React.FC = () => {
               padding: '2px 6px',
               borderRadius: '4px',
               background:
-                trackingStatus === 'reliable'
+                monitoringStatus === 'suspended'
+                  ? 'rgba(56, 189, 248, 0.15)'
+                  : monitoringStatus === 'initializing'
+                  ? 'rgba(56, 189, 248, 0.15)'
+                  : monitoringStatus === 'stopped'
+                  ? 'rgba(148, 163, 184, 0.15)'
+                  : trackingStatus === 'reliable'
                   ? 'rgba(16, 185, 129, 0.15)'
                   : trackingStatus === 'unreliable'
                   ? 'rgba(245, 158, 11, 0.15)'
                   : 'rgba(148, 163, 184, 0.15)',
               color:
-                trackingStatus === 'reliable'
+                monitoringStatus === 'suspended'
+                  ? '#38bdf8'
+                  : monitoringStatus === 'initializing'
+                  ? '#38bdf8'
+                  : monitoringStatus === 'stopped'
+                  ? '#94a3b8'
+                  : trackingStatus === 'reliable'
                   ? '#10b981'
                   : trackingStatus === 'unreliable'
                   ? '#f59e0b'
@@ -497,7 +702,13 @@ export const Popup: React.FC = () => {
               fontWeight: 600
             }}
           >
-            {trackingStatus === 'reliable'
+            {monitoringStatus === 'suspended'
+              ? 'Paused (App Inactive)'
+              : monitoringStatus === 'initializing'
+              ? 'Initializing Sensors...'
+              : monitoringStatus === 'stopped'
+              ? 'Sensor Offline'
+              : trackingStatus === 'reliable'
               ? 'Reliable Tracking'
               : trackingStatus === 'unreliable'
               ? 'Poor Lighting/Angle'
@@ -513,18 +724,32 @@ export const Popup: React.FC = () => {
                 fontSize: '15px',
                 fontWeight: 700,
                 color:
-                  blinksPerMinute !== null && blinksPerMinute < (settings.lowBlinkRateThreshold || 10)
+                  !isLiveMonitoring
+                    ? '#94a3b8'
+                    : blinksPerMinute !== null && blinksPerMinute < (settings.lowBlinkRateThreshold || 10)
                     ? '#ef4444'
                     : '#38bdf8',
                 marginTop: '2px'
               }}
             >
-              {blinksPerMinute !== null
+              {monitoringStatus === 'suspended'
+                ? '― bpm'
+                : monitoringStatus === 'initializing'
+                ? '― bpm'
+                : monitoringStatus === 'stopped'
+                ? '― bpm'
+                : blinksPerMinute !== null
                 ? `${blinksPerMinute} bpm`
                 : `${Math.round(observationProgress * 100)}% sampled`}
             </div>
             <div style={{ fontSize: '9.5px', color: '#64748b', marginTop: '2px' }}>
-              {blinksPerMinute !== null
+              {monitoringStatus === 'suspended'
+                ? 'Unavailable (Suspended)'
+                : monitoringStatus === 'initializing'
+                ? 'Initializing sensor...'
+                : monitoringStatus === 'stopped'
+                ? 'Monitoring paused'
+                : blinksPerMinute !== null
                 ? blinkRateStatus === 'low'
                   ? `Low rate (<${settings.lowBlinkRateThreshold || 10} bpm)`
                   : 'Normal rate (12-20 bpm)'
@@ -538,13 +763,19 @@ export const Popup: React.FC = () => {
               {blinkCount} <span style={{ fontSize: '10px', fontWeight: 400, color: '#94a3b8' }}>blinks</span>
             </div>
             <div style={{ fontSize: '9.5px', color: '#64748b', marginTop: '2px' }}>
-              Real EAR Open-Close Cycle
+              {monitoringStatus === 'suspended'
+                ? 'Paused Session Total'
+                : monitoringStatus === 'initializing'
+                ? 'Session Total'
+                : monitoringStatus === 'stopped'
+                ? 'Historical Session Total'
+                : 'Real EAR Open-Close Cycle'}
             </div>
           </div>
         </div>
 
-        {/* Observation Progress Bar (during initial window) */}
-        {blinkRateStatus === 'collecting' && (
+        {/* Observation Progress Bar (during initial window or paused display) */}
+        {isLiveMonitoring && blinkRateStatus === 'collecting' && (
           <div style={{ marginTop: '8px' }}>
             <div
               style={{
@@ -577,6 +808,22 @@ export const Popup: React.FC = () => {
                   transition: 'width 0.3s ease'
                 }}
               />
+            </div>
+          </div>
+        )}
+        {monitoringStatus === 'suspended' && (
+          <div style={{ marginTop: '8px' }}>
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                fontSize: '10px',
+                color: '#94a3b8',
+                marginBottom: '3px'
+              }}
+            >
+              <span>Observation Window ({settings.blinkObservationPeriodSec || 120}s)</span>
+              <span style={{ color: '#38bdf8', fontWeight: 600 }}>Paused (Edge Unfocused)</span>
             </div>
           </div>
         )}
@@ -650,16 +897,28 @@ export const Popup: React.FC = () => {
               borderRadius: '4px',
               background: isBreakActive
                 ? 'rgba(239, 68, 68, 0.25)'
-                : monitoringActive
+                : monitoringStatus === 'suspended'
+                ? 'rgba(56, 189, 248, 0.15)'
+                : isLiveMonitoring
                 ? 'rgba(56, 189, 248, 0.15)'
                 : 'rgba(148, 163, 184, 0.15)',
-              color: isBreakActive ? '#ef4444' : monitoringActive ? '#38bdf8' : '#94a3b8',
+              color: isBreakActive
+                ? '#ef4444'
+                : monitoringStatus === 'suspended'
+                ? '#38bdf8'
+                : isLiveMonitoring
+                ? '#38bdf8'
+                : '#94a3b8',
               fontWeight: 700
             }}
           >
             {isBreakActive
               ? 'BREAK DUE!'
-              : monitoringActive
+              : monitoringStatus === 'suspended'
+              ? `${formatRemainingTime(breakRemainingMs)} (Paused)`
+              : monitoringStatus === 'initializing'
+              ? `${formatRemainingTime(breakRemainingMs)} (Resuming)`
+              : isLiveMonitoring
               ? formatRemainingTime(breakRemainingMs)
               : 'Timer Inactive'}
           </span>
@@ -775,27 +1034,43 @@ export const Popup: React.FC = () => {
               fontFamily: 'monospace',
               padding: '2px 6px',
               borderRadius: '4px',
-              background: blurPx > 0 ? 'rgba(244, 63, 94, 0.2)' : 'rgba(16, 185, 129, 0.15)',
-              color: blurPx > 0 ? '#f43f5e' : '#10b981',
+              background:
+                monitoringStatus === 'suspended'
+                  ? 'rgba(56, 189, 248, 0.15)'
+                  : isLiveMonitoring && blurPx > 0
+                  ? 'rgba(244, 63, 94, 0.2)'
+                  : 'rgba(16, 185, 129, 0.15)',
+              color:
+                monitoringStatus === 'suspended'
+                  ? '#38bdf8'
+                  : isLiveMonitoring && blurPx > 0
+                  ? '#f43f5e'
+                  : '#10b981',
               fontWeight: 700
             }}
           >
-            {blurPx > 0 ? `${blurPx}px Active` : '0px (Clear)'}
+            {monitoringStatus === 'suspended'
+              ? '0px (Suspended)'
+              : !isLiveMonitoring
+              ? '0px (Clear)'
+              : blurPx > 0
+              ? `${blurPx}px Active`
+              : '0px (Clear)'}
           </span>
         </div>
 
         <div style={{ display: 'flex', gap: '4px', marginTop: '8px' }}>
-          <div style={{ flex: 1, padding: '5px', borderRadius: '4px', background: alertLevel >= 1 ? 'rgba(245, 158, 11, 0.25)' : 'rgba(255, 255, 255, 0.04)', border: `1px solid ${alertLevel >= 1 ? '#f59e0b' : 'transparent'}`, textAlign: 'center' }}>
+          <div style={{ flex: 1, padding: '5px', borderRadius: '4px', background: isLiveMonitoring && alertLevel >= 1 ? 'rgba(245, 158, 11, 0.25)' : 'rgba(255, 255, 255, 0.04)', border: `1px solid ${isLiveMonitoring && alertLevel >= 1 ? '#f59e0b' : 'transparent'}`, textAlign: 'center' }}>
             <div style={{ fontSize: '9px', color: '#94a3b8' }}>Level 1</div>
-            <div style={{ fontSize: '11px', fontWeight: 700, color: alertLevel >= 1 ? '#f59e0b' : '#64748b' }}>3px</div>
+            <div style={{ fontSize: '11px', fontWeight: 700, color: isLiveMonitoring && alertLevel >= 1 ? '#f59e0b' : '#64748b' }}>3px</div>
           </div>
-          <div style={{ flex: 1, padding: '5px', borderRadius: '4px', background: alertLevel >= 2 ? 'rgba(249, 115, 22, 0.25)' : 'rgba(255, 255, 255, 0.04)', border: `1px solid ${alertLevel >= 2 ? '#f97316' : 'transparent'}`, textAlign: 'center' }}>
+          <div style={{ flex: 1, padding: '5px', borderRadius: '4px', background: isLiveMonitoring && alertLevel >= 2 ? 'rgba(249, 115, 22, 0.25)' : 'rgba(255, 255, 255, 0.04)', border: `1px solid ${isLiveMonitoring && alertLevel >= 2 ? '#f97316' : 'transparent'}`, textAlign: 'center' }}>
             <div style={{ fontSize: '9px', color: '#94a3b8' }}>Level 2</div>
-            <div style={{ fontSize: '11px', fontWeight: 700, color: alertLevel >= 2 ? '#f97316' : '#64748b' }}>6px</div>
+            <div style={{ fontSize: '11px', fontWeight: 700, color: isLiveMonitoring && alertLevel >= 2 ? '#f97316' : '#64748b' }}>6px</div>
           </div>
-          <div style={{ flex: 1, padding: '5px', borderRadius: '4px', background: alertLevel >= 3 ? 'rgba(239, 68, 68, 0.25)' : 'rgba(255, 255, 255, 0.04)', border: `1px solid ${alertLevel >= 3 ? '#ef4444' : 'transparent'}`, textAlign: 'center' }}>
+          <div style={{ flex: 1, padding: '5px', borderRadius: '4px', background: isLiveMonitoring && alertLevel >= 3 ? 'rgba(239, 68, 68, 0.25)' : 'rgba(255, 255, 255, 0.04)', border: `1px solid ${isLiveMonitoring && alertLevel >= 3 ? '#ef4444' : 'transparent'}`, textAlign: 'center' }}>
             <div style={{ fontSize: '9px', color: '#94a3b8' }}>Level 3</div>
-            <div style={{ fontSize: '11px', fontWeight: 700, color: alertLevel >= 3 ? '#ef4444' : '#64748b' }}>11px</div>
+            <div style={{ fontSize: '11px', fontWeight: 700, color: isLiveMonitoring && alertLevel >= 3 ? '#ef4444' : '#64748b' }}>11px</div>
           </div>
         </div>
       </div>

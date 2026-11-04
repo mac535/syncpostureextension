@@ -21,9 +21,11 @@ import { hasPrivacyConsent } from '../privacy/privacyConsent';
 import type { PostureBaseline } from '../posture/calibration';
 
 export type DetectionMode = 'no_person' | 'single_person' | 'multi_person';
+export type MonitoringLifecycleState = 'stopped' | 'running' | 'suspended';
 
 export interface UseVisionFeedOptions {
   active?: boolean;
+  suspended?: boolean;
   hasConsent?: boolean;
   smoothingWeight?: number;
   blinkConfig?: Partial<BlinkDetectorConfig>;
@@ -45,6 +47,9 @@ export interface UseVisionFeedResult {
   personCount: number;
   detectionMode: DetectionMode;
   detectedFaceBoxes: DetectedFaceBox[];
+  // Lifecycle & Suspension State
+  lifecycleState: MonitoringLifecycleState;
+  isSuspended: boolean;
   // Blink Detection & Rate Metrics
   leftEAR: number;
   rightEAR: number;
@@ -65,7 +70,7 @@ export interface UseVisionFeedResult {
 }
 
 export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeedResult {
-  const { active = true, hasConsent, smoothingWeight = 0.35, blinkConfig, baseline } = options;
+  const { active = true, suspended = false, hasConsent, smoothingWeight = 0.35, blinkConfig, baseline } = options;
 
   const baselineRef = useRef<PostureBaseline | null>(baseline ?? null);
   useEffect(() => {
@@ -73,15 +78,19 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
   }, [baseline]);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const acquisitionIdRef = useRef<number>(0);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const animFrameIdRef = useRef<number | null>(null);
   const isProcessingRef = useRef<boolean>(false);
   const lastTimestampMsRef = useRef<number>(0);
   const lastProcessTimeRef = useRef<number>(0);
   const lastFaceDetectTimeRef = useRef<number>(0);
+  const lastFaceDetectSuccessTimeRef = useRef<number>(0);
+  const lastProcessedVideoTimeRef = useRef<number>(-1);
   const cachedFaceBoxesRef = useRef<DetectedFaceBox[]>([]);
   const rawPersonCountsRef = useRef<number[]>([]);
-  const fpsTimerRef = useRef<{ frames: number; lastTime: number }>({ frames: 0, lastTime: performance.now() });
+  const fpsTimerRef = useRef<{ frames: number; lastTime: number }>({ frames: 0, lastTime: 0 });
   const smootherRef = useRef<PostureMetricsSmoother>(new PostureMetricsSmoother(smoothingWeight));
   const blinkDetectorRef = useRef<BlinkDetector>(new BlinkDetector(blinkConfig));
 
@@ -105,6 +114,10 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
   const lastUiUpdateTimeRef = useRef<number>(0);
   const prevStatusRef = useRef<string>('insufficient_data');
   const prevSeverityRef = useRef<number>(0);
+  const prevPoseDetectedRef = useRef<boolean>(false);
+  const prevTrackingStatusRef = useRef<'reliable' | 'unreliable' | 'lost'>('lost');
+  const prevDetectionModeRef = useRef<DetectionMode>('no_person');
+  const prevCameraActiveRef = useRef<boolean>(false);
 
   // Sync any changes to blinkConfig
   useEffect(() => {
@@ -148,7 +161,7 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
 
   // Full reset when camera goes offline or vision session restarts
   useEffect(() => {
-    if (!cameraActive) {
+    if (!cameraActive && prevCameraActiveRef.current) {
       // Cancel any in-flight blinkDetected flash timer
       if (blinkDetectedClearTimerRef.current !== null) {
         clearTimeout(blinkDetectedClearTimerRef.current);
@@ -167,6 +180,9 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
       prevObservationProgressRef.current = 0;
       prevTimestampCountRef.current = 0;
       prevLastBlinkTimestampRef.current = null;
+      prevPoseDetectedRef.current = false;
+      prevTrackingStatusRef.current = 'lost';
+      lastProcessedVideoTimeRef.current = -1;
       // Reset React state
       setLeftEAR(0);
       setRightEAR(0);
@@ -182,7 +198,10 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
       setBlinkTimestamps([]);
       setObservationProgress(0);
       setLastBlinkTimestampMs(null);
+      setPoseDetected(false);
+      setTrackingStatus('lost');
     }
+    prevCameraActiveRef.current = cameraActive;
   }, [cameraActive]);
 
   // Adaptive detection mode & person count
@@ -220,28 +239,41 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
     };
   }, []);
 
-  // 2. Start Live Webcam Feed
+  // 2. Start Live Webcam Feed (with safe acquisition cancellation and release on suspension)
   useEffect(() => {
-    // HARD PRIVACY GATE: Never call getUserMedia without explicit privacy acknowledgement
-    const consentGranted = hasConsent !== undefined ? hasConsent : hasPrivacyConsent();
-    if (!active || !consentGranted) {
-      setCameraActive(false);
+    // If not active or suspended, release any held webcam stream tracks immediately
+    if (!active || suspended) {
+      acquisitionIdRef.current++;
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+      }
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+      setCameraActive((prev) => (prev ? false : prev));
       return;
     }
 
-    let stream: MediaStream | null = null;
+    // HARD PRIVACY GATE: Never call getUserMedia without explicit privacy acknowledgement
+    const consentGranted = hasConsent !== undefined ? hasConsent : hasPrivacyConsent();
+    if (!consentGranted) {
+      return;
+    }
+
     let isMounted = true;
+    const currentAcquisitionId = ++acquisitionIdRef.current;
 
     async function startWebcam() {
       // Re-check consent before invoking getUserMedia
       if (!hasPrivacyConsent() && hasConsent !== true) {
-        setCameraActive(false);
+        setCameraActive((prev) => (prev ? false : prev));
         return;
       }
 
       try {
         setCameraError(null);
-        stream = await navigator.mediaDevices.getUserMedia({
+        const stream = await navigator.mediaDevices.getUserMedia({
           video: {
             width: { ideal: 640 },
             height: { ideal: 480 },
@@ -251,12 +283,19 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
           audio: false
         });
 
-        if (isMounted && videoRef.current) {
+        // Guard against focus loss or unmount during async camera acquisition
+        if (!isMounted || !active || suspended || currentAcquisitionId !== acquisitionIdRef.current) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+
+        streamRef.current = stream;
+        if (videoRef.current) {
           videoRef.current.srcObject = stream;
           setCameraActive(true);
         }
       } catch (err: unknown) {
-        if (isMounted) {
+        if (isMounted && currentAcquisitionId === acquisitionIdRef.current) {
           console.error('Error accessing webcam:', err);
           let errorMsg = 'Camera permission denied or camera unavailable';
           if (err instanceof DOMException) {
@@ -282,15 +321,23 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
 
     return () => {
       isMounted = false;
-      if (stream) {
-        stream.getTracks().forEach((track) => track.stop());
+      acquisitionIdRef.current++;
+      const currentStream = streamRef.current;
+      const currentVideo = videoRef.current;
+      if (currentStream) {
+        currentStream.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
       }
+      if (currentVideo) {
+        currentVideo.srcObject = null;
+      }
+      setCameraActive(false);
     };
-  }, [active, hasConsent]);
+  }, [active, suspended, hasConsent]);
 
-  // 3. Optimized Lightweight Inference Loop (~7.5 FPS / 130ms cadence)
+  // 3. Optimized Lightweight Inference Loop (~10 FPS / 100ms cadence)
   useEffect(() => {
-    if (!active || !pipelineReady || !cameraActive) {
+    if (!active || suspended || !pipelineReady || !cameraActive) {
       return;
     }
 
@@ -300,15 +347,28 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
 
     let isRunning = true;
     let timerId: ReturnType<typeof setInterval> | null = null;
-    let backgroundWorker: Worker | null = null;
+    let rVFCId: number | null = null;
 
     // Single frame inference execution - strictly guarded against overlapping runs
     function executeInference() {
       if (!isRunning || isProcessingRef.current) return;
-      if (!video || video.readyState < 2 || video.videoWidth === 0) return;
+      if (!video || video.readyState < 2 || video.videoWidth === 0 || video.paused || video.ended) return;
+
+      const now = performance.now();
+      const currentVideoTime = video.currentTime;
+      const timeSinceLastProcess = now - lastProcessTimeRef.current;
+
+      // Skip redundant inference if the camera hardware hasn't presented a new frame yet
+      if (
+        currentVideoTime > 0 &&
+        currentVideoTime === lastProcessedVideoTimeRef.current &&
+        timeSinceLastProcess < 110
+      ) {
+        return;
+      }
+      lastProcessedVideoTimeRef.current = currentVideoTime;
 
       isProcessingRef.current = true;
-      const now = performance.now();
       lastProcessTimeRef.current = now;
 
       try {
@@ -317,15 +377,26 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
           currentTimestampMs > lastTimestampMsRef.current ? currentTimestampMs : lastTimestampMsRef.current + 1;
         lastTimestampMsRef.current = adjustedTimestampMs;
 
-        // Run Pose & Face Landmark inference (fast pass, ~16ms total)
-        const results = detectLandmarksForVideo(video, adjustedTimestampMs);
+        const currentCount = rawPersonCountsRef.current.length > 0
+          ? rawPersonCountsRef.current[rawPersonCountsRef.current.length - 1]
+          : 0;
+        const isMultiPerson = cachedFaceBoxesRef.current.length >= 2 || currentCount >= 2;
+        const isSinglePerson = !isMultiPerson && (cachedFaceBoxesRef.current.length === 1 || currentCount === 1);
 
-        // Relaxed face detection for multi-person count (every 500ms)
-        if (now - lastFaceDetectTimeRef.current >= 500) {
+        // 1. Run Pose & Face Landmark inference (with conditional face skipping for multi-person)
+        const results = detectLandmarksForVideo(video, adjustedTimestampMs, {
+          skipFaceLandmarker: isMultiPerson
+        });
+
+        // 2. Adaptive Face Detection for Multi-Person Count
+        // Runs every 1000ms when stable in single_person mode; every 500ms when transitioning/multi-person
+        const faceIntervalMs = prevDetectionModeRef.current === 'single_person' ? 1000 : 500;
+        if (now - lastFaceDetectTimeRef.current >= faceIntervalMs) {
           lastFaceDetectTimeRef.current = now;
           const detectorResult = detectFacesForVideo(video, adjustedTimestampMs);
 
           if (detectorResult && detectorResult.detections) {
+            lastFaceDetectSuccessTimeRef.current = now;
             const boxes: DetectedFaceBox[] = detectorResult.detections.map((det) => {
               const bb = det.boundingBox;
               const catScore = det.categories?.[0]?.score;
@@ -339,7 +410,10 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
             });
 
             cachedFaceBoxesRef.current = boxes;
-            setDetectedFaceBoxes(boxes);
+            // Only update state if count changed or multiple faces need active box overlay
+            if (boxes.length !== cachedFaceBoxesRef.current.length || boxes.length >= 2) {
+              setDetectedFaceBoxes(boxes);
+            }
 
             const rawCount = boxes.length;
             const history = rawPersonCountsRef.current;
@@ -368,20 +442,18 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
               nextMode = 'multi_person';
             }
 
+            prevDetectionModeRef.current = nextMode;
             setPersonCount((prev) => (prev !== stableCount ? stableCount : prev));
             setDetectionMode((prev) => (prev !== nextMode ? nextMode : prev));
+          } else if (now - lastFaceDetectSuccessTimeRef.current > 3500 && rawPersonCountsRef.current.length > 0) {
+            // Decay stale person count history if no faces detected for >3.5s
+            rawPersonCountsRef.current = [];
           }
         }
 
         if (results) {
           const poseLandmarks = results.poseResult?.landmarks?.[0];
           const faceLandmarks = results.faceResult?.faceLandmarks?.[0];
-
-          const currentCount = rawPersonCountsRef.current.length > 0
-            ? rawPersonCountsRef.current[rawPersonCountsRef.current.length - 1]
-            : 0;
-          const isMultiPerson = cachedFaceBoxesRef.current.length >= 2 || currentCount >= 2;
-          const isSinglePerson = !isMultiPerson && (cachedFaceBoxesRef.current.length === 1 || currentCount === 1);
 
           // Render canvas ONLY when document is visible to save GPU and DOM paints
           if (canvas && document.visibilityState === 'visible') {
@@ -398,7 +470,6 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
                 const ctx = canvas.getContext('2d');
                 if (ctx) {
                   if (isMultiPerson) {
-                    ctx.clearRect(0, 0, canvas.width, canvas.height);
                     drawFaceBoxesOnCanvas(ctx, canvas.width, canvas.height, cachedFaceBoxesRef.current);
                   } else if (isSinglePerson) {
                     drawLandmarksOnCanvas(ctx, canvas.width, canvas.height, poseLandmarks, faceLandmarks);
@@ -411,7 +482,11 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
           }
 
           const isPosePresent = Boolean(poseLandmarks && poseLandmarks.length > 0);
-          setPoseDetected(isPosePresent && isSinglePerson);
+          const nextPoseDetected = isPosePresent && isSinglePerson;
+          if (nextPoseDetected !== prevPoseDetectedRef.current) {
+            prevPoseDetectedRef.current = nextPoseDetected;
+            setPoseDetected(nextPoseDetected);
+          }
 
           if (isSinglePerson && isPosePresent && poseLandmarks) {
             const rawMetrics = computePostureMetrics(poseLandmarks);
@@ -508,16 +583,27 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
               setLastBlinkTimestampMs(blinkRes.lastBlinkTimestampMs);
               prevLastBlinkTimestampRef.current = blinkRes.lastBlinkTimestampMs;
             }
-            setTrackingStatus(blinkRes.trackingStatus);
+            if (blinkRes.trackingStatus !== prevTrackingStatusRef.current) {
+              prevTrackingStatusRef.current = blinkRes.trackingStatus;
+              setTrackingStatus(blinkRes.trackingStatus);
+            }
           } else {
             blinkDetectorRef.current.update(null, adjustedTimestampMs);
-            setTrackingStatus('lost');
-            setLowBlinkRate(false);
+            if (prevTrackingStatusRef.current !== 'lost') {
+              prevTrackingStatusRef.current = 'lost';
+              setTrackingStatus('lost');
+            }
+            if (prevLowBlinkRateRef.current !== false) {
+              prevLowBlinkRateRef.current = false;
+              setLowBlinkRate(false);
+            }
           }
         }
 
         fpsTimerRef.current.frames += 1;
-        if (now - fpsTimerRef.current.lastTime >= 1000) {
+        if (fpsTimerRef.current.lastTime === 0) {
+          fpsTimerRef.current.lastTime = now;
+        } else if (now - fpsTimerRef.current.lastTime >= 1000) {
           setMeasuredFps(Math.round((fpsTimerRef.current.frames * 1000) / (now - fpsTimerRef.current.lastTime)));
           fpsTimerRef.current.frames = 0;
           fpsTimerRef.current.lastTime = now;
@@ -531,49 +617,47 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
 
     const CADENCE_MS = 100;
 
-    try {
-      const workerCode = `
-        let timer = null;
-        self.onmessage = function(e) {
-          if (e.data === 'start') {
-            if (!timer) {
-              timer = setInterval(function() {
-                self.postMessage('tick');
-              }, ${CADENCE_MS});
-            }
-          } else if (e.data === 'stop') {
-            if (timer) {
-              clearInterval(timer);
-              timer = null;
-            }
-          }
-        };
-      `;
-      const blob = new Blob([workerCode], { type: 'application/javascript' });
-      const workerUrl = URL.createObjectURL(blob);
-      backgroundWorker = new Worker(workerUrl);
-      backgroundWorker.onmessage = () => {
+    // Hybrid frame scheduling:
+    // If requestVideoFrameCallback is available, hook frame presentation for zero-latency sync.
+    // In all environments, keep an interval timer active (cadence 100ms) to ensure background tabs
+    // continue to monitor posture and eye strain even when the monitor tab is unmounted or in the background.
+    const currentVideo = video;
+    const hasRVFC = typeof currentVideo.requestVideoFrameCallback === 'function';
+
+    function scheduleRVFC() {
+      if (!isRunning || !hasRVFC || !currentVideo) return;
+      rVFCId = currentVideo.requestVideoFrameCallback(() => {
         executeInference();
-      };
-      backgroundWorker.postMessage('start');
-      URL.revokeObjectURL(workerUrl);
-    } catch {
-      timerId = setInterval(() => {
-        executeInference();
-      }, CADENCE_MS);
+        scheduleRVFC();
+      });
     }
+
+    if (hasRVFC && document.visibilityState === 'visible') {
+      scheduleRVFC();
+    }
+
+    timerId = setInterval(() => {
+      executeInference();
+    }, CADENCE_MS);
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && hasRVFC && rVFCId === null) {
+        scheduleRVFC();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
 
     return () => {
       isRunning = false;
       isProcessingRef.current = false;
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       if (timerId !== null) {
         clearInterval(timerId);
         timerId = null;
       }
-      if (backgroundWorker) {
-        backgroundWorker.postMessage('stop');
-        backgroundWorker.terminate();
-        backgroundWorker = null;
+      if (rVFCId !== null && hasRVFC && currentVideo && typeof currentVideo.cancelVideoFrameCallback === 'function') {
+        currentVideo.cancelVideoFrameCallback(rVFCId);
+        rVFCId = null;
       }
       if (animFrameIdRef.current !== null) {
         cancelAnimationFrame(animFrameIdRef.current);
@@ -589,8 +673,23 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
         clearTimeout(blinkDetectedClearTimerRef.current);
         blinkDetectedClearTimerRef.current = null;
       }
+      // Reset timing and smoothing state upon pause/suspension so stale data does not trigger false alerts
+      const currentSmoother = smootherRef.current;
+      const currentBlinkDetector = blinkDetectorRef.current;
+      lastProcessTimeRef.current = 0;
+      lastProcessedVideoTimeRef.current = -1;
+      lastTimestampMsRef.current = 0;
+      currentSmoother.reset();
+      currentBlinkDetector.reset(false);
     };
-  }, [active, pipelineReady, cameraActive]);
+  }, [active, suspended, pipelineReady, cameraActive]);
+
+  const lifecycleState: MonitoringLifecycleState = !active
+    ? 'stopped'
+    : suspended
+    ? 'suspended'
+    : 'running';
+  const isSuspendedState = lifecycleState === 'suspended';
 
   return {
     videoRef,
@@ -607,6 +706,8 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
     personCount,
     detectionMode,
     detectedFaceBoxes,
+    lifecycleState,
+    isSuspended: isSuspendedState,
     // Blink Detection & Rate Metrics
     leftEAR,
     rightEAR,

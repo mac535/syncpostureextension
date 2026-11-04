@@ -63,10 +63,74 @@ let initPromise: Promise<{
   faceLandmarker: FaceLandmarker | null;
   faceDetector: FaceDetector | null;
 }> | null = null;
+let lastMonotonicTimestampMs = 0;
+
+/**
+ * Guarantees monotonic timestamps for MediaPipe Tasks Vision.
+ * Calling detectForVideo with a timestamp <= previous timestamp will crash MediaPipe.
+ */
+export function ensureMonotonicTimestamp(timestampMs?: number): number {
+  const candidate = typeof timestampMs === 'number' && Number.isFinite(timestampMs) && timestampMs > 0
+    ? timestampMs
+    : performance.now();
+  const safe = candidate > lastMonotonicTimestampMs ? candidate : lastMonotonicTimestampMs + 1;
+  lastMonotonicTimestampMs = safe;
+  return safe;
+}
+
+/**
+ * Resets the monotonic timestamp counter (useful during testing or session restart).
+ */
+export function resetMonotonicTimestamp(initialMs: number = 0): void {
+  lastMonotonicTimestampMs = initialMs;
+}
+
+/**
+ * Returns the current readiness of each vision model.
+ */
+export function getVisionPipelineStatus(): VisionPipelineStatus {
+  return {
+    isReady: poseLandmarkerInstance !== null,
+    isLoading: initPromise !== null && poseLandmarkerInstance === null,
+    error: null,
+    poseDetected: poseLandmarkerInstance !== null,
+    faceDetected: faceLandmarkerInstance !== null,
+    poseLandmarksCount: poseLandmarkerInstance !== null ? 33 : 0,
+    faceLandmarksCount: faceLandmarkerInstance !== null ? 478 : 0,
+    fps: 0
+  };
+}
+
+/**
+ * Safely closes and cleans up all active MediaPipe model instances.
+ */
+export function disposeMediaPipe(): void {
+  try {
+    poseLandmarkerInstance?.close();
+  } catch (err) {
+    console.debug('PoseLandmarker close:', err);
+  }
+  try {
+    faceLandmarkerInstance?.close();
+  } catch (err) {
+    console.debug('FaceLandmarker close:', err);
+  }
+  try {
+    faceDetectorInstance?.close();
+  } catch (err) {
+    console.debug('FaceDetector close:', err);
+  }
+  poseLandmarkerInstance = null;
+  faceLandmarkerInstance = null;
+  faceDetectorInstance = null;
+  initPromise = null;
+  lastMonotonicTimestampMs = 0;
+}
 
 /**
  * Initializes MediaPipe Tasks Vision FilesetResolver and PoseLandmarker first,
  * with non-blocking background initialization of secondary detectors.
+ * Subsequent calls safely return the existing promise or initialized instances.
  */
 export async function initializeMediaPipe(): Promise<{
   poseLandmarker: PoseLandmarker;
@@ -95,21 +159,37 @@ export async function initializeMediaPipe(): Promise<{
         vision = await FilesetResolver.forVisionTasks(WASM_CDN_URL);
       }
 
-      // 1. Initialize PoseLandmarker (Core posture model: lightweight, GPU-accelerated)
-      const poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath: POSE_MODEL_URL,
-          delegate: 'GPU'
-        },
-        runningMode: 'VIDEO',
-        numPoses: 1,
-        minPoseDetectionConfidence: 0.5,
-        minPosePresenceConfidence: 0.5,
-        minTrackingConfidence: 0.5
-      });
+      // 1. Initialize PoseLandmarker with GPU delegate and CPU fallback for Edge compatibility
+      let poseLandmarker: PoseLandmarker;
+      try {
+        poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: POSE_MODEL_URL,
+            delegate: 'GPU'
+          },
+          runningMode: 'VIDEO',
+          numPoses: 1,
+          minPoseDetectionConfidence: 0.5,
+          minPosePresenceConfidence: 0.5,
+          minTrackingConfidence: 0.5
+        });
+      } catch (gpuErr) {
+        console.warn('PostureSync: GPU delegate initialization failed for PoseLandmarker in Edge/Chromium. Falling back to CPU:', gpuErr);
+        poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: POSE_MODEL_URL,
+            delegate: 'CPU'
+          },
+          runningMode: 'VIDEO',
+          numPoses: 1,
+          minPoseDetectionConfidence: 0.5,
+          minPosePresenceConfidence: 0.5,
+          minTrackingConfidence: 0.5
+        });
+      }
       poseLandmarkerInstance = poseLandmarker;
 
-      // 2. Initialize FaceLandmarker in background without blocking posture readiness
+      // 2. Initialize FaceLandmarker in background with CPU fallback for Edge
       FaceLandmarker.createFromOptions(vision, {
         baseOptions: {
           modelAssetPath: FACE_MODEL_URL,
@@ -125,11 +205,27 @@ export async function initializeMediaPipe(): Promise<{
         .then((fl) => {
           faceLandmarkerInstance = fl;
         })
-        .catch((err) => {
-          console.warn('FaceLandmarker background initialization skipped:', err);
+        .catch(async () => {
+          try {
+            const cpuFl = await FaceLandmarker.createFromOptions(vision, {
+              baseOptions: {
+                modelAssetPath: FACE_MODEL_URL,
+                delegate: 'CPU'
+              },
+              runningMode: 'VIDEO',
+              numFaces: 1,
+              minFaceDetectionConfidence: 0.5,
+              minFacePresenceConfidence: 0.5,
+              minTrackingConfidence: 0.5,
+              outputFaceBlendshapes: false
+            });
+            faceLandmarkerInstance = cpuFl;
+          } catch (err) {
+            console.warn('FaceLandmarker background initialization skipped:', err);
+          }
         });
 
-      // 3. Initialize FaceDetector in background (relaxed multi-person tracking)
+      // 3. Initialize FaceDetector in background with CPU fallback for Edge
       FaceDetector.createFromOptions(vision, {
         baseOptions: {
           modelAssetPath: FACE_DETECTOR_MODEL_URL,
@@ -142,8 +238,21 @@ export async function initializeMediaPipe(): Promise<{
         .then((fd) => {
           faceDetectorInstance = fd;
         })
-        .catch((err) => {
-          console.warn('FaceDetector background initialization skipped:', err);
+        .catch(async () => {
+          try {
+            const cpuFd = await FaceDetector.createFromOptions(vision, {
+              baseOptions: {
+                modelAssetPath: FACE_DETECTOR_MODEL_URL,
+                delegate: 'CPU'
+              },
+              runningMode: 'VIDEO',
+              minDetectionConfidence: 0.5,
+              minSuppressionThreshold: 0.3
+            });
+            faceDetectorInstance = cpuFd;
+          } catch (err) {
+            console.warn('FaceDetector background initialization skipped:', err);
+          }
         });
 
       return { poseLandmarker, faceLandmarker: faceLandmarkerInstance, faceDetector: faceDetectorInstance };
@@ -156,13 +265,20 @@ export async function initializeMediaPipe(): Promise<{
   return initPromise;
 }
 
+export interface DetectLandmarksOptions {
+  /** If true, skips the 478-point Face Landmarker (e.g. multi-person mode or unoccupied frame) */
+  skipFaceLandmarker?: boolean;
+}
+
 /**
  * Executes optimized video frame inference.
- * Runs PoseLandmarker as primary pass; heavy FaceLandmarker is throttled to save CPU/GPU.
+ * Runs PoseLandmarker as primary pass. Heavy FaceLandmarker is intelligently skipped
+ * when multi-person mode is active or when no pose is present in the frame.
  */
 export function detectLandmarksForVideo(
   video: HTMLVideoElement,
-  timestampMs: number
+  timestampMs?: number,
+  options?: DetectLandmarksOptions
 ): VisionPipelineResults | null {
   if (!poseLandmarkerInstance) {
     return null;
@@ -172,17 +288,22 @@ export function detectLandmarksForVideo(
     return null;
   }
 
+  const safeTimestampMs = ensureMonotonicTimestamp(timestampMs);
+
   try {
     // 1. Primary Pose Landmark Inference
-    const poseResult = poseLandmarkerInstance.detectForVideo(video, timestampMs);
+    const poseResult = poseLandmarkerInstance.detectForVideo(video, safeTimestampMs);
+    const hasPose = Boolean(poseResult && poseResult.landmarks && poseResult.landmarks.length > 0);
 
     // 2. Face Landmark Inference for real Eye Aspect Ratio (EAR) blink tracking
+    // Optimized: Skip 478-point dense mesh when explicitly asked or if no person is present in the frame
     let faceResult: FaceLandmarkerResult | null = null;
-    if (faceLandmarkerInstance) {
+    const shouldRunFace = faceLandmarkerInstance !== null && !options?.skipFaceLandmarker && hasPose;
+
+    if (shouldRunFace && faceLandmarkerInstance) {
       try {
-        faceResult = faceLandmarkerInstance.detectForVideo(video, timestampMs);
-      } catch (faceErr) {
-        // Safe fallback if face landmarker has transient issue
+        faceResult = faceLandmarkerInstance.detectForVideo(video, safeTimestampMs);
+      } catch {
         faceResult = null;
       }
     }
@@ -190,7 +311,7 @@ export function detectLandmarksForVideo(
     return {
       poseResult,
       faceResult,
-      timestampMs
+      timestampMs: safeTimestampMs
     };
   } catch (err) {
     console.error('Inference error during frame processing:', err);
@@ -203,7 +324,7 @@ export function detectLandmarksForVideo(
  */
 export function detectFacesForVideo(
   video: HTMLVideoElement,
-  timestampMs: number
+  timestampMs?: number
 ): FaceDetectorResult | null {
   if (!faceDetectorInstance) {
     return null;
@@ -213,8 +334,10 @@ export function detectFacesForVideo(
     return null;
   }
 
+  const safeTimestampMs = ensureMonotonicTimestamp(timestampMs);
+
   try {
-    return faceDetectorInstance.detectForVideo(video, timestampMs);
+    return faceDetectorInstance.detectForVideo(video, safeTimestampMs);
   } catch (err) {
     console.warn('FaceDetector detection error:', err);
     return null;
@@ -242,6 +365,7 @@ export const POSE_CONNECTIONS: [number, number][] = [
 
 /**
  * Helper to render pose & face landmark points onto a target 2D canvas context.
+ * Uses batched path creation to minimize canvas draw call overhead by >90%.
  */
 export function drawLandmarksOnCanvas(
   ctx: CanvasRenderingContext2D,
@@ -252,47 +376,53 @@ export function drawLandmarksOnCanvas(
 ): void {
   ctx.clearRect(0, 0, width, height);
 
-  // 1. Render Pose Skeleton
+  // 1. Render Pose Skeleton (Batched path)
   if (poseLandmarks && poseLandmarks.length > 0) {
     ctx.strokeStyle = '#38bdf8'; // Sky blue
     ctx.lineWidth = 2.5;
 
+    ctx.beginPath();
     for (const [startIdx, endIdx] of POSE_CONNECTIONS) {
       const p1 = poseLandmarks[startIdx];
       const p2 = poseLandmarks[endIdx];
       if (p1 && p2 && (p1.visibility ?? 1) > 0.4 && (p2.visibility ?? 1) > 0.4) {
-        ctx.beginPath();
         ctx.moveTo(p1.x * width, p1.y * height);
         ctx.lineTo(p2.x * width, p2.y * height);
-        ctx.stroke();
       }
     }
+    ctx.stroke();
 
-    // Draw landmark keypoint dots
+    // Draw landmark keypoint dots (Batched arcs)
     ctx.fillStyle = '#10b981'; // Emerald
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 1.2;
 
+    ctx.beginPath();
     for (const lm of poseLandmarks) {
       if ((lm.visibility ?? 1) > 0.4) {
-        ctx.beginPath();
-        ctx.arc(lm.x * width, lm.y * height, 4, 0, 2 * Math.PI);
-        ctx.fill();
-        ctx.stroke();
+        const cx = lm.x * width;
+        const cy = lm.y * height;
+        ctx.moveTo(cx + 4, cy);
+        ctx.arc(cx, cy, 4, 0, 2 * Math.PI);
       }
     }
+    ctx.fill();
+    ctx.stroke();
   }
 
-  // 2. Render Face Mesh (sampled lightly to avoid draw call overhead)
+  // 2. Render Face Mesh (Batched sub-sampled circles)
   if (faceLandmarks && faceLandmarks.length > 0) {
     ctx.fillStyle = 'rgba(244, 63, 94, 0.75)';
     const step = 6;
+    ctx.beginPath();
     for (let i = 0; i < faceLandmarks.length; i += step) {
       const lm = faceLandmarks[i];
-      ctx.beginPath();
-      ctx.arc(lm.x * width, lm.y * height, 1.8, 0, 2 * Math.PI);
-      ctx.fill();
+      const cx = lm.x * width;
+      const cy = lm.y * height;
+      ctx.moveTo(cx + 1.8, cy);
+      ctx.arc(cx, cy, 1.8, 0, 2 * Math.PI);
     }
+    ctx.fill();
   }
 }
 

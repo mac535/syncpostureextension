@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { PostureMetrics } from '../lib/posture/postureMetrics';
 import { POSTURE_THRESHOLDS } from '../lib/posture/postureClassifier';
 
@@ -541,7 +541,7 @@ export const PostureInstructions: React.FC<PostureInstructionsProps> = ({
             gap: '1.25rem',
           }}
           role="region"
-          aria-label="Posture verified. Ready to launch demo workspace."
+          aria-label="Posture verified. Ready to begin monitoring."
         >
           {/* Verified headline */}
           <div>
@@ -577,41 +577,11 @@ export const PostureInstructions: React.FC<PostureInstructionsProps> = ({
                 margin: 0,
               }}
             >
-              Reference posture satisfied. Background monitoring is now active.
+              Reference posture established. Posture monitoring is now active.
             </p>
           </div>
 
-          {/* Two-tab architecture diagram */}
-          <div
-            className="two-tab-diagram"
-            aria-label="Tab layout: Tab 01 Monitor stays active, Tab 02 Workspace opens"
-          >
-            <div className="tab-box tab-box--active">
-              <div className="tab-box__label">TAB 01</div>
-              <div className="tab-box__name">MONITOR</div>
-              <div className="tab-box__status">&#9679; STAYS ACTIVE</div>
-            </div>
-            <div className="tab-arrow" aria-hidden="true">
-              <div>&#8596;</div>
-              <div style={{ fontSize: '0.6rem', marginTop: '2px', color: 'var(--ink-border)' }}>BC</div>
-            </div>
-            <div className="tab-box">
-              <div className="tab-box__label">TAB 02</div>
-              <div className="tab-box__name">WORKSPACE</div>
-              <div
-                style={{
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: '0.65rem',
-                  color: 'var(--ink-muted)',
-                  marginTop: '0.2rem',
-                }}
-              >
-                OPENS NOW &#8599;
-              </div>
-            </div>
-          </div>
-
-          {/* Launch button */}
+          {/* Confirm & Complete Setup button */}
           <button
             id="btn-launch-demo-completed"
             className="btn btn-primary"
@@ -623,9 +593,9 @@ export const PostureInstructions: React.FC<PostureInstructionsProps> = ({
               fontSize: '0.9rem',
               letterSpacing: '0.02em',
             }}
-            aria-label="Launch Demo Workspace in a new tab"
+            aria-label="Finish calibration and begin monitoring"
           >
-            Launch Demo Workspace &#8599;
+            Start Posture Monitoring ✓
           </button>
         </div>
       )}

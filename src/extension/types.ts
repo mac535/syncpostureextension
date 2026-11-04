@@ -22,6 +22,9 @@ export const DEFAULT_SETTINGS: PostureSettings = {
   lowBlinkRateThreshold: 10 // < 10 bpm is low
 };
 
+export type MonitoringStatus = 'stopped' | 'initializing' | 'running' | 'suspended';
+export type SuspensionReason = 'edge_unfocused' | 'manual' | null;
+
 export interface PostureTelemetryPayload {
   status: PostureStatus;
   severity: PostureSeverity;
@@ -30,6 +33,9 @@ export interface PostureTelemetryPayload {
   accumulatingMs: number;
   holdMs: number;
   timestamp: number;
+  sequenceNumber?: number;
+  monitoringStatus?: MonitoringStatus;
+  suspensionReason?: SuspensionReason;
   // Progressive blur & alert level
   alertLevel?: number; // 0: none, 1: initial (3px), 2: continued (6px), 3: persistent (11px)
   blurPx?: number;
@@ -41,8 +47,10 @@ export interface PostureTelemetryPayload {
   lowBlinkRate?: boolean;
   faceDetected?: boolean;
   poseDetected?: boolean;
+  personCount?: number;
   observationProgress?: number;
   trackingStatus?: 'reliable' | 'unreliable' | 'lost';
+  blinkObservationPeriodSec?: number;
 }
 
 export type ExtensionMessage =
@@ -52,6 +60,10 @@ export type ExtensionMessage =
   | {
       type: 'STATUS_RESPONSE';
       monitoringActive: boolean;
+      monitoringStatus?: MonitoringStatus;
+      suspensionReason?: SuspensionReason;
+      sequenceNumber?: number;
+      timestamp?: number;
       status: PostureStatus;
       severity: PostureSeverity;
       intensity: number;
@@ -70,14 +82,25 @@ export type ExtensionMessage =
       lowBlinkRate?: boolean;
       faceDetected?: boolean;
       poseDetected?: boolean;
+      personCount?: number;
       observationProgress?: number;
       trackingStatus?: 'reliable' | 'unreliable' | 'lost';
       breakRemainingMs?: number;
       isBreakActive?: boolean;
+      isSuspended?: boolean;
+      isEdgeAppFocused?: boolean;
     }
   | {
       type: 'POSTURE_TELEMETRY';
       payload: PostureTelemetryPayload;
+    }
+  | {
+      type: 'APPLICATION_FOCUS_LIFECYCLE';
+      action: 'SUSPEND' | 'RESUME' | 'STOP';
+      isAppFocused: boolean;
+      monitoringStatus?: MonitoringStatus;
+      sequenceNumber?: number;
+      timestamp?: number;
     }
   | {
       type: 'POSTURE_ALERT';

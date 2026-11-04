@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { send, onMessage } from '../lib/channel';
 import type { SyncMessage } from '../types/messages';
 import { useVisionFeed } from '../lib/hooks/useVisionFeed';
@@ -34,10 +34,46 @@ export const Dashboard: React.FC = () => {
   };
 
   const [isMonitoringActive, setIsMonitoringActive] = useState<boolean>(true);
+  const [isAppFocused, setIsAppFocused] = useState<boolean>(true);
   const [blinkObservationPeriodSec, setBlinkObservationPeriodSec] = useState<number>(120);
   const [lowBlinkRateThreshold, setLowBlinkRateThreshold] = useState<number>(10);
 
+  const isSuspended = isMonitoringActive && !isAppFocused;
   const isCameraEnabled = hasConsent && !userDeclinedConsent && isMonitoringActive;
+
+  // Edge Application Focus Detection:
+  // In the extension context, the background service worker is the sole authority for focus state.
+  // It sends APPLICATION_FOCUS_LIFECYCLE messages (handled in the runtime message listener below)
+  // which drive setIsAppFocused here. A duplicate chrome.windows.onFocusChanged listener in the
+  // Dashboard would create a second independent state machine that can race with the background
+  // and falsely suspend monitoring when the extension popup opens/closes.
+  //
+  // The fallback window.focus/blur handler below is only active in local dev environments where
+  // the chrome.windows API is unavailable (e.g. running via `vite dev`).
+  useEffect(() => {
+    if (typeof chrome !== 'undefined' && chrome.windows && chrome.windows.onFocusChanged) {
+      // Production extension: focus state is driven exclusively by APPLICATION_FOCUS_LIFECYCLE
+      // messages from the background service worker. No listener registered here.
+      return;
+    }
+
+    // Fallback for dev / environments without chrome.windows API
+    let focusDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+    const onFocus = () => setIsAppFocused(true);
+    const onBlur = () => {
+      if (focusDebounceTimer !== null) clearTimeout(focusDebounceTimer);
+      focusDebounceTimer = setTimeout(() => {
+        setIsAppFocused(false);
+      }, 500);
+    };
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      if (focusDebounceTimer !== null) clearTimeout(focusDebounceTimer);
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('blur', onBlur);
+    };
+  }, []);
 
   // Posture Calibration Baseline state
   const [baseline, setBaseline] = useState<PostureBaseline | null>(null);
@@ -105,6 +141,7 @@ export const Dashboard: React.FC = () => {
     trackingStatus,
   } = useVisionFeed({
     active: isCameraEnabled,
+    suspended: isSuspended,
     hasConsent: isCameraEnabled,
     baseline,
     blinkConfig: {
@@ -113,62 +150,147 @@ export const Dashboard: React.FC = () => {
     }
   });
 
-  const handleQuickCalibrate = async () => {
-    if (!postureMetrics || !postureMetrics.isValid) return;
+  const sequenceCounter = useRef<number>(0);
+
+  // When suspended due to Edge losing focus: reset temporal debouncer and clear active tab blur
+  useEffect(() => {
+    if (isSuspended) {
+      debouncerRef.current?.reset();
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+        chrome.runtime.sendMessage({
+          type: 'PROGRESSIVE_ALERT_UPDATE',
+          alertLevel: 0,
+          blurPx: 0,
+          status: 'good',
+          message: '',
+          soundEnabled: false,
+          isRecovering: true
+        }).catch(() => {});
+        chrome.runtime.sendMessage({ type: 'POSTURE_RESTORED' }).catch(() => {});
+        chrome.runtime.sendMessage({
+          type: 'POSTURE_TELEMETRY',
+          payload: {
+            status: 'good',
+            severity: 0,
+            intensity: 0,
+            debouncerState: 'idle',
+            accumulatingMs: 0,
+            holdMs: debouncerRef.current?.configuredHoldMs || 10000,
+            timestamp: Date.now(),
+            sequenceNumber: ++sequenceCounter.current,
+            alertLevel: 0,
+            blurPx: 0,
+            alertMessage: '',
+            blinkCount,
+            blinksPerMinute: null,
+            blinkRateStatus: 'collecting',
+            lowBlinkRate: false,
+            faceDetected: false,
+            poseDetected: false,
+            personCount: 0,
+            observationProgress: 0,
+            trackingStatus: 'lost',
+            monitoringStatus: 'suspended',
+            suspensionReason: 'edge_unfocused',
+            blinkObservationPeriodSec
+          }
+        }).catch(() => {});
+      }
+    }
+  }, [isSuspended, blinkCount, blinkObservationPeriodSec]);
+
+  const postureMetricsRef = useRef(postureMetrics);
+  useEffect(() => {
+    postureMetricsRef.current = postureMetrics;
+  }, [postureMetrics]);
+
+  const isCalibratingRef = useRef(false);
+
+  const handleQuickCalibrate = useCallback(async () => {
+    const currentMetrics = postureMetricsRef.current;
+    if (!currentMetrics || !currentMetrics.isValid || isCalibratingRef.current) return;
+    isCalibratingRef.current = true;
     setIsCalibrating(true);
     try {
-      const saved = await saveBaseline(postureMetrics);
+      const saved = await saveBaseline(currentMetrics);
       setBaseline(saved);
       setCalibrationSuccess(true);
       setTimeout(() => setCalibrationSuccess(false), 3000);
     } finally {
+      isCalibratingRef.current = false;
       setIsCalibrating(false);
     }
-  };
+  }, []);
 
+  // Consolidated runtime message listener for Dashboard
   useEffect(() => {
-    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
-      const handleRuntimeMsg = (msg: any) => {
-        if (!msg || typeof msg !== 'object') return;
-        if (msg.type === 'START_MONITORING') {
-          setIsMonitoringActive(true);
-        } else if (msg.type === 'STOP_MONITORING' || msg.type === 'MONITORING_STOPPED') {
-          setIsMonitoringActive(false);
-        } else if (msg.type === 'TRIGGER_CALIBRATION_FROM_POPUP') {
-          handleQuickCalibrate();
-        }
-      };
-      chrome.runtime.onMessage.addListener(handleRuntimeMsg);
-      return () => chrome.runtime.onMessage.removeListener(handleRuntimeMsg);
+    if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.onMessage) {
+      return;
     }
-  }, [postureMetrics]);
+
+    const handleRuntimeMsg = (msg: unknown, _sender: unknown, sendResponse?: (res?: unknown) => void) => {
+      if (!msg || typeof msg !== 'object') return;
+      const m = msg as Record<string, any>;
+
+      switch (m.type) {
+        case 'APPLICATION_FOCUS_LIFECYCLE': {
+          if (m.action === 'SUSPEND') {
+            setIsAppFocused(false);
+          } else if (m.action === 'RESUME') {
+            setIsAppFocused(true);
+          } else if (m.action === 'STOP') {
+            setIsMonitoringActive(false);
+          }
+          break;
+        }
+        case 'TRIGGER_CALIBRATION_FROM_POPUP': {
+          handleQuickCalibrate();
+          sendResponse?.({ success: true });
+          break;
+        }
+        case 'START_MONITORING':
+        case 'MONITORING_STARTED': {
+          setIsMonitoringActive(true);
+          sendResponse?.({ success: true, monitoringActive: true });
+          break;
+        }
+        case 'STOP_MONITORING':
+        case 'MONITORING_STOPPED': {
+          setIsMonitoringActive(false);
+          sendResponse?.({ success: true, monitoringActive: false });
+          break;
+        }
+        case 'UPDATE_SETTINGS': {
+          if (m.settings) {
+            if (m.settings.holdDurationSec && m.settings.holdDurationSec > 0) {
+              debouncerRef.current?.setHoldDuration(m.settings.holdDurationSec * 1000);
+            }
+            if (typeof m.settings.monitoringActive === 'boolean') {
+              setIsMonitoringActive(m.settings.monitoringActive);
+            }
+            if (typeof m.settings.blinkObservationPeriodSec === 'number') {
+              setBlinkObservationPeriodSec(m.settings.blinkObservationPeriodSec);
+            }
+            if (typeof m.settings.lowBlinkRateThreshold === 'number') {
+              setLowBlinkRateThreshold(m.settings.lowBlinkRateThreshold);
+            }
+          }
+          sendResponse?.({ success: true });
+          break;
+        }
+      }
+    };
+
+    chrome.runtime.onMessage.addListener(handleRuntimeMsg);
+    return () => {
+      chrome.runtime.onMessage.removeListener(handleRuntimeMsg);
+    };
+  }, [handleQuickCalibrate]);
 
   // Posture Instructions Orientation state
   const [hasSeenInstructions, setHasSeenInstructions] = useState<boolean>(() => {
     return localStorage.getItem('postureInstructionsSeen') === 'true';
   });
-
-  // Secondary tab launch error state
-  const [popupBlocked, setPopupBlocked] = useState<boolean>(false);
-
-  // Target window reference name for secondary tab reuse
-  const DEMO_WINDOW_NAME = 'syncPostureDemo';
-
-  const launchDemoTab = () => {
-    try {
-      const demoUrl = `${window.location.origin}/demo`;
-      const secondaryTab = window.open(demoUrl, DEMO_WINDOW_NAME);
-      if (!secondaryTab || secondaryTab.closed || typeof secondaryTab.closed === 'undefined') {
-        setPopupBlocked(true);
-      } else {
-        setPopupBlocked(false);
-        secondaryTab.focus();
-      }
-    } catch (err) {
-      console.error('Failed to open secondary tab:', err);
-      setPopupBlocked(true);
-    }
-  };
 
   const handleCompleteInstructions = () => {
     localStorage.setItem('postureInstructionsSeen', 'true');
@@ -176,10 +298,8 @@ export const Dashboard: React.FC = () => {
     if (postureMetrics && postureMetrics.isValid) {
       saveBaseline(postureMetrics).then((b) => setBaseline(b)).catch(() => {});
     }
-    // Emit SETUP_COMPLETE over BroadcastChannel so secondary tabs know setup is valid
+    // Emit SETUP_COMPLETE over BroadcastChannel so extension listeners know setup is valid
     send({ type: 'SETUP_COMPLETE' });
-    // Keep Dashboard alive! Open secondary tab without unmounting Dashboard
-    launchDemoTab();
   };
 
   const handleDismissInstructions = () => {
@@ -192,9 +312,8 @@ export const Dashboard: React.FC = () => {
     setHasSeenInstructions(false);
   };
 
-  // ---------- Demo Tab Connection State ----------
-  const [demoConnected, setDemoConnected] = useState<boolean>(false);
-  const demoHeartbeatTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // ---------- Developer Diagnostics Panel State ----------
+  const [showDiagnostics, setShowDiagnostics] = useState<boolean>(false);
 
   // ---------- Broadcast Log State ----------
   const [lastSentMessage, setLastSentMessage] = useState<string>('None yet');
@@ -211,6 +330,10 @@ export const Dashboard: React.FC = () => {
   const prevDetectionModeRef = useRef<string>(detectionMode);
   const prevAlertLevelRef = useRef<number>(0);
   const lastAlertUpdateBroadcastTimeRef = useRef<number>(0);
+  const prevBroadcastStatusRef = useRef<string>('insufficient_data');
+  const prevBroadcastSeverityRef = useRef<number>(0);
+  const prevBroadcastModeRef = useRef<string>(detectionMode);
+  const prevBroadcastLowBlinkRef = useRef<boolean>(false);
 
   // Notify background that camera monitor feed is running
   useEffect(() => {
@@ -221,20 +344,6 @@ export const Dashboard: React.FC = () => {
       }).catch(() => {});
     }
   }, [cameraActive]);
-
-  // Handle calibration request dispatched from extension popup
-  useEffect(() => {
-    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
-      const listener = (msg: unknown) => {
-        const m = msg as { type?: string };
-        if (m && m.type === 'TRIGGER_CALIBRATION_FROM_POPUP') {
-          handleQuickCalibrate();
-        }
-      };
-      chrome.runtime.onMessage.addListener(listener);
-      return () => chrome.runtime.onMessage.removeListener(listener);
-    }
-  }, [postureMetrics]);
 
   if (!debouncerRef.current) {
     debouncerRef.current = new PostureDebouncer({
@@ -253,7 +362,7 @@ export const Dashboard: React.FC = () => {
     }
   }, [cameraActive]);
 
-  // Sync settings and hold duration from extension
+  // Sync initial settings from storage
   useEffect(() => {
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
       chrome.storage.local.get('posturesync_settings').then((data) => {
@@ -276,42 +385,6 @@ export const Dashboard: React.FC = () => {
           setLowBlinkRateThreshold(s.lowBlinkRateThreshold);
         }
       }).catch(() => {});
-    }
-
-    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
-      const listener = (msg: unknown) => {
-        const m = msg as {
-          type?: string;
-          settings?: {
-            holdDurationSec?: number;
-            monitoringActive?: boolean;
-            blinkObservationPeriodSec?: number;
-            lowBlinkRateThreshold?: number;
-          };
-        };
-        if (m && m.type === 'UPDATE_SETTINGS' && m.settings) {
-          if (m.settings.holdDurationSec) {
-            debouncerRef.current?.setHoldDuration(m.settings.holdDurationSec * 1000);
-          }
-          if (m.settings.monitoringActive !== undefined) {
-            setIsMonitoringActive(m.settings.monitoringActive);
-          }
-          if (m.settings.blinkObservationPeriodSec) {
-            setBlinkObservationPeriodSec(m.settings.blinkObservationPeriodSec);
-          }
-          if (m.settings.lowBlinkRateThreshold) {
-            setLowBlinkRateThreshold(m.settings.lowBlinkRateThreshold);
-          }
-        } else if (m && (m.type === 'START_MONITORING' || m.type === 'MONITORING_STARTED')) {
-          setIsMonitoringActive(true);
-        } else if (m && (m.type === 'STOP_MONITORING' || m.type === 'MONITORING_STOPPED')) {
-          setIsMonitoringActive(false);
-        }
-      };
-      chrome.runtime.onMessage.addListener(listener);
-      return () => {
-        chrome.runtime.onMessage.removeListener(listener);
-      };
     }
   }, []);
 
@@ -428,10 +501,20 @@ export const Dashboard: React.FC = () => {
       }
     }
 
-    // 5. Throttled continuous telemetry broadcast (approx ~10Hz / 100ms interval or immediate on state change)
+    // 5. Intelligent telemetry broadcast: immediate on state change, throttled to ~1Hz during steady state
+    const isStatusChanged = status !== prevBroadcastStatusRef.current || severity !== prevBroadcastSeverityRef.current;
+    const isModeChanged = detectionMode !== prevBroadcastModeRef.current;
+    const isBlinkAlertChanged = lowBlinkRate !== prevBroadcastLowBlinkRef.current;
+    const isMeaningfulChange = isStateTransition || isLevelEscalated || isStatusChanged || isModeChanged || isBlinkAlertChanged;
+
     const timeSinceLastBroadcast = now - lastTelemetryBroadcastTimeRef.current;
-    if (isStateTransition || isLevelEscalated || timeSinceLastBroadcast >= 95) {
+
+    if (isMeaningfulChange || timeSinceLastBroadcast >= 1000) {
       lastTelemetryBroadcastTimeRef.current = now;
+      prevBroadcastStatusRef.current = status;
+      prevBroadcastSeverityRef.current = severity;
+      prevBroadcastModeRef.current = detectionMode;
+      prevBroadcastLowBlinkRef.current = lowBlinkRate;
 
       send({
         type: 'POSTURE_TELEMETRY',
@@ -453,24 +536,29 @@ export const Dashboard: React.FC = () => {
             accumulatingMs: debouncer.getAccumulatingDuration(now),
             holdMs: debouncer.configuredHoldMs,
             timestamp: now,
+            sequenceNumber: ++sequenceCounter.current,
+            monitoringStatus: isSuspended ? 'suspended' : 'running',
+            suspensionReason: isSuspended ? 'edge_unfocused' : null,
             alertLevel: currentAlertLevel,
             blurPx: progressive.blurPx,
             alertMessage: progressive.message,
             blinkCount,
-            blinksPerMinute,
+            blinksPerMinute: isSuspended ? null : blinksPerMinute,
             blinkRateStatus,
-            lowBlinkRate,
+            lowBlinkRate: isSuspended ? false : lowBlinkRate,
             faceDetected: trackingStatus === 'reliable',
             poseDetected: Boolean(poseDetected),
+            personCount,
             observationProgress,
-            trackingStatus
+            trackingStatus: isSuspended ? 'lost' : trackingStatus,
+            blinkObservationPeriodSec
           }
         }).catch(() => {});
       }
 
-      // 6. Log sampling: log immediately on state change, or sample approx once per second
+      // 6. Log sampling: log immediately on meaningful state change, or sample once per 3 seconds
       const timeSinceLastLog = now - lastLogSampleTimeRef.current;
-      if (isStateTransition || timeSinceLastLog >= 1000) {
+      if (isMeaningfulChange || timeSinceLastLog >= 3000) {
         lastLogSampleTimeRef.current = now;
         const logEntry = `POSTURE_TELEMETRY status=${status} severity=${severity} intensity=${clampedIntensity.toFixed(2)} state=${nextState} blinks=${blinkCount} bpm=${blinksPerMinute ?? '--'}`;
         setLastSentMessage(`${logEntry} at ${new Date(now).toLocaleTimeString()}`);
@@ -615,27 +703,18 @@ export const Dashboard: React.FC = () => {
     };
   }, [cameraActive]);
 
-  // ---------- Channel Activity & Demo Heartbeat Listener ----------
+  // ---------- Channel Activity & Diagnostics Listener ----------
   useEffect(() => {
     const unsubscribe = onMessage((msg: SyncMessage) => {
       const timestamp = new Date().toLocaleTimeString();
 
       if (msg.type === 'DEMO_READY') {
-        setDemoConnected(true);
-        // Reset timeout for demo presence
-        if (demoHeartbeatTimeoutRef.current) {
-          clearTimeout(demoHeartbeatTimeoutRef.current);
-        }
-        demoHeartbeatTimeoutRef.current = setTimeout(() => {
-          setDemoConnected(false);
-        }, 15000);
-
         setReceivedMessages((prev) => [
-          `[${timestamp}] Received: DEMO_READY (Demo Tab Connected)`,
-          ...prev.slice(0, 9)
+          `[${timestamp}] Received: DEMO_READY (Secondary client connected)`,
+          ...prev.slice(0, 19)
         ]);
 
-        // Synchronize initial state to newly connected Demo
+        // Synchronize initial state to connecting client
         const debouncer = debouncerRef.current;
         const currentDebouncerState = debouncer?.currentState ?? 'idle';
         const isInsufficient =
@@ -677,16 +756,13 @@ export const Dashboard: React.FC = () => {
       } else {
         setReceivedMessages((prev) => [
           `[${timestamp}] Received: ${msg.type} ${JSON.stringify(msg)}`,
-          ...prev.slice(0, 9)
+          ...prev.slice(0, 19)
         ]);
       }
     });
 
     return () => {
       unsubscribe();
-      if (demoHeartbeatTimeoutRef.current) {
-        clearTimeout(demoHeartbeatTimeoutRef.current);
-      }
     };
   }, [postureClassification, postureMetrics]);
 
@@ -718,51 +794,105 @@ export const Dashboard: React.FC = () => {
             POSTURE MONITOR READOUT
           </h1>
 
-          {/* 4-state monitoring status strip */}
+          {/* 3-state monitoring status strip */}
           <div className="status-row" role="status" aria-label="System status">
             {/* 1. Camera */}
             <span className="status-item">
               <span
-                className={`status-dot ${cameraActive ? 'status-dot--good status-dot--pulse' : 'status-dot--alert'}`}
+                className={`status-dot ${
+                  isSuspended
+                    ? 'status-dot--muted'
+                    : cameraActive
+                    ? 'status-dot--good status-dot--pulse'
+                    : 'status-dot--alert'
+                }`}
                 aria-hidden="true"
               />
-              <span className={cameraActive ? 'status-label--good' : 'status-label--alert'}>
-                {cameraActive ? 'CAMERA LIVE' : 'CAMERA OFF'}
+              <span
+                className={
+                  isSuspended
+                    ? 'status-label--muted'
+                    : cameraActive
+                    ? 'status-label--good'
+                    : 'status-label--alert'
+                }
+              >
+                {isSuspended
+                  ? 'CAMERA PAUSED (APP INACTIVE)'
+                  : cameraActive
+                  ? 'CAMERA LIVE'
+                  : 'CAMERA OFF'}
               </span>
             </span>
 
             {/* 2. MediaPipe */}
             <span className="status-item">
               <span
-                className={`status-dot ${pipelineReady ? 'status-dot--good' : pipelineLoading ? 'status-dot--muted' : 'status-dot--alert'}`}
+                className={`status-dot ${
+                  isSuspended
+                    ? 'status-dot--muted'
+                    : pipelineReady
+                    ? 'status-dot--good'
+                    : pipelineLoading
+                    ? 'status-dot--muted'
+                    : 'status-dot--alert'
+                }`}
                 aria-hidden="true"
               />
-              <span className={pipelineReady ? 'status-label--good' : pipelineLoading ? 'status-label--muted' : 'status-label--alert'}>
-                {pipelineReady ? 'MEDIAPIPE READY' : pipelineLoading ? 'MEDIAPIPE INIT...' : 'MEDIAPIPE ERROR'}
+              <span
+                className={
+                  isSuspended
+                    ? 'status-label--muted'
+                    : pipelineReady
+                    ? 'status-label--good'
+                    : pipelineLoading
+                    ? 'status-label--muted'
+                    : 'status-label--alert'
+                }
+              >
+                {isSuspended
+                  ? 'INFERENCE SUSPENDED'
+                  : pipelineReady
+                  ? 'MEDIAPIPE READY'
+                  : pipelineLoading
+                  ? 'MEDIAPIPE INIT...'
+                  : 'MEDIAPIPE ERROR'}
               </span>
             </span>
 
             {/* 3. Posture verified */}
             <span className="status-item">
               <span
-                className={`status-dot ${hasSeenInstructions ? 'status-dot--good' : 'status-dot--muted'}`}
+                className={`status-dot ${
+                  isSuspended
+                    ? 'status-dot--muted'
+                    : hasSeenInstructions && isMonitoringActive
+                    ? 'status-dot--good'
+                    : 'status-dot--muted'
+                }`}
                 aria-hidden="true"
               />
-              <span className={hasSeenInstructions ? 'status-label--good' : 'status-label--muted'}>
-                {hasSeenInstructions ? 'POSTURE VERIFIED' : 'SETUP PENDING'}
+              <span
+                className={
+                  isSuspended
+                    ? 'status-label--muted'
+                    : !isMonitoringActive
+                    ? 'status-label--muted'
+                    : hasSeenInstructions
+                    ? 'status-label--good'
+                    : 'status-label--muted'
+                }
+              >
+                {isSuspended
+                  ? 'MONITORING SUSPENDED'
+                  : !isMonitoringActive
+                  ? 'MONITORING STOPPED'
+                  : hasSeenInstructions
+                  ? 'POSTURE VERIFIED'
+                  : 'SETUP PENDING'}
               </span>
             </span>
 
-            {/* 4. Demo tab */}
-            <span className="status-item">
-              <span
-                className={`status-dot ${demoConnected ? 'status-dot--good status-dot--pulse' : 'status-dot--muted'}`}
-                aria-hidden="true"
-              />
-              <span className={demoConnected ? 'status-label--good' : 'status-label--muted'}>
-                {demoConnected ? 'DEMO CONNECTED' : 'DEMO WAITING'}
-              </span>
-            </span>
           </div>
         </div>
 
@@ -800,18 +930,6 @@ export const Dashboard: React.FC = () => {
           </button>
           {hasSeenInstructions && (
             <>
-              <button
-                id="btn-launch-demo-header"
-                className="btn btn-primary"
-                onClick={launchDemoTab}
-                style={{
-                  fontSize: '0.75rem',
-                  padding: '0.35rem 0.85rem',
-                  fontFamily: 'var(--font-mono)'
-                }}
-              >
-                Launch Demo Workspace ↗
-              </button>
               <button
                 id="btn-review-posture-guide"
                 onClick={handleRestartSetup}
@@ -897,47 +1015,15 @@ export const Dashboard: React.FC = () => {
             <div style={{
               display: 'flex',
               alignItems: 'center',
-              gap: '1rem',
+              gap: '0.5rem',
               fontFamily: 'var(--font-mono)',
               fontSize: '0.68rem',
               color: 'var(--ink-muted)',
               flexWrap: 'wrap'
             }}>
-              <span>TAB 01 // MONITOR <span style={{ color: 'var(--signal-good)' }}>● ACTIVE</span></span>
-              <span style={{ color: 'var(--ink-border)' }}>·</span>
-              <span>TAB 02 // WORKSPACE <span style={{ color: demoConnected ? 'var(--signal-good)' : 'var(--ink-muted)' }}>{demoConnected ? '● CONNECTED' : '○ WAITING'}</span></span>
+              <span>ACTIVE MONITORING · REAL-TIME BROWSER INTERVENTIONS ENABLED</span>
             </div>
           </div>
-        </div>
-      )}
-
-      {/* Popup Blocked Warning Notice */}
-      {popupBlocked && (
-        <div
-          style={{
-            backgroundColor: 'rgba(255, 107, 74, 0.12)',
-            border: '1px solid var(--signal-alert)',
-            borderRadius: '4px',
-            padding: '0.85rem 1.25rem',
-            marginBottom: '1.5rem',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            flexWrap: 'wrap',
-            gap: '1rem',
-            color: 'var(--ink-text)',
-            fontFamily: 'var(--font-mono)',
-            fontSize: '0.75rem'
-          }}
-        >
-          <span>Pop-up was blocked by your browser. Please allow pop-ups to open secondary windows.</span>
-          <button
-            className="btn btn-danger"
-            onClick={launchDemoTab}
-            style={{ fontSize: '0.75rem', padding: '0.35rem 0.85rem' }}
-          >
-            RETRY
-          </button>
         </div>
       )}
 
@@ -967,7 +1053,17 @@ export const Dashboard: React.FC = () => {
               justifyContent: 'center',
               border: '1px solid var(--ink-border)'
             }}>
-              {!hasConsent || userDeclinedConsent ? (
+              {isSuspended ? (
+                <div style={{ textAlign: 'center', padding: '1.75rem 1.25rem', color: 'var(--ink-text)' }}>
+                  <VideoOff size={32} style={{ margin: '0 auto 0.75rem', color: 'var(--ink-muted)' }} />
+                  <p style={{ fontWeight: 600, fontFamily: 'var(--font-mono)', fontSize: '0.85rem', color: 'var(--ink-text)', letterSpacing: '0.04em' }}>
+                    APPLICATION INACTIVE — INFERENCE SUSPENDED
+                  </p>
+                  <p style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', margin: '0.4rem auto 0', maxWidth: '340px', lineHeight: 1.45 }}>
+                    Camera tracks released and MediaPipe inference paused while working outside Microsoft Edge. Monitoring automatically resumes when Edge is focused.
+                  </p>
+                </div>
+              ) : !hasConsent || userDeclinedConsent ? (
                 <div style={{ textAlign: 'center', padding: '1.75rem 1.25rem', color: 'var(--ink-text)' }}>
                   <VideoOff size={32} style={{ margin: '0 auto 0.75rem', color: 'var(--ink-muted)' }} />
                   <p style={{ fontWeight: 600, fontFamily: 'var(--font-mono)', fontSize: '0.85rem', color: 'var(--ink-text)', letterSpacing: '0.04em' }}>
@@ -1154,17 +1250,24 @@ export const Dashboard: React.FC = () => {
               }}>
                 <div style={{ color: 'var(--ink-muted)', fontSize: '0.65rem', fontFamily: 'var(--font-mono)', letterSpacing: '0.05em', marginBottom: '4px' }}>BLINK RATE</div>
                 <div style={{ fontFamily: 'var(--font-mono)', lineHeight: 1 }}>
-                  {blinkRateStatus === 'collecting' ? (
+                  {isSuspended ? (
+                    <span style={{ fontSize: '0.78rem', color: 'var(--ink-muted)' }}>
+                      Inference suspended<br />
+                      <span style={{ fontSize: '0.65rem', color: 'var(--ink-border)' }}>Paused (Edge unfocused)</span>
+                    </span>
+                  ) : blinkRateStatus === 'collecting' ? (
                     <span style={{ fontSize: '0.78rem', color: 'var(--ink-muted)' }}>
                       Collecting blink data&hellip;<br />
-                      <span style={{ fontSize: '0.65rem', color: 'var(--ink-border)' }}>{Math.round(observationProgress * 100)}% of 30s</span>
+                      <span style={{ fontSize: '0.65rem', color: 'var(--ink-border)' }}>
+                        {Math.round(observationProgress * 100)}% of {blinkObservationPeriodSec}s ({Math.round(observationProgress * blinkObservationPeriodSec)}s observed)
+                      </span>
                     </span>
                   ) : (
                     <>
                       <span style={{ fontSize: '1.5rem', fontWeight: 700, color: lowBlinkRate ? 'var(--signal-alert)' : 'var(--signal-good)' }}>
                         {blinksPerMinute ?? '—'}
                       </span>
-                      <span style={{ fontSize: '0.72rem', color: 'var(--ink-muted)', marginLeft: '4px' }}>blinks/min</span>
+                      <span style={{ fontSize: '0.72rem', color: 'var(--ink-muted)', marginLeft: '4px' }}>blinks/min ({blinkObservationPeriodSec}s window)</span>
                       {lowBlinkRate && (
                         <div style={{ fontSize: '0.62rem', fontWeight: 700, color: 'var(--signal-alert)', marginTop: '3px', letterSpacing: '0.06em' }}>⚠ LOW (&lt; 10)</div>
                       )}
@@ -1185,8 +1288,10 @@ export const Dashboard: React.FC = () => {
                 <div style={{ color: 'var(--ink-muted)', fontSize: '0.65rem', fontFamily: 'var(--font-mono)', letterSpacing: '0.05em', marginBottom: '4px' }}>BLINKS</div>
                 <div style={{ fontFamily: 'var(--font-mono)', lineHeight: 1 }}>
                   <span style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--signal-good)' }}>{blinkCount}</span>
-                  <span style={{ fontSize: '0.72rem', color: 'var(--ink-muted)', marginLeft: '4px' }}>total</span>
-                  {blinkDetected && (
+                  <span style={{ fontSize: '0.72rem', color: 'var(--ink-muted)', marginLeft: '4px' }}>
+                    {isSuspended ? 'total (paused)' : 'total'}
+                  </span>
+                  {!isSuspended && blinkDetected && (
                     <div style={{ fontSize: '0.62rem', fontWeight: 700, color: 'var(--signal-good)', marginTop: '3px', letterSpacing: '0.04em' }}>● BLINK DETECTED</div>
                   )}
                 </div>
@@ -1285,51 +1390,6 @@ export const Dashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Cross-Tab Signal Controls */}
-          <div className="glass-panel" style={{ padding: '1.25rem' }}>
-            <div className="panel-header">
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', letterSpacing: '0.06em', color: 'var(--ink-text)' }}>
-                TELEMETRY BUS CONTROL
-              </span>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--ink-muted)' }}>
-                SIMULATION
-              </span>
-            </div>
-            <p style={{ fontSize: '0.85rem', color: 'var(--ink-muted)', marginBottom: '1rem', lineHeight: 1.5 }}>
-              Transmit test signal events over <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--ink-text)' }}>BroadcastChannel</span> to verify target workspace reactions.
-            </p>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-              <button
-                id="btn-send-test-signal"
-                className="btn btn-danger"
-                onClick={handleSendTestSignal}
-              >
-                Send Test (Slouching 2)
-              </button>
-
-              <button
-                id="btn-clear-intervention"
-                className="btn btn-secondary"
-                onClick={handleSendClear}
-              >
-                Clear Intervention
-              </button>
-            </div>
-
-            <div style={{
-              marginTop: '0.85rem',
-              padding: '0.5rem 0.75rem',
-              borderRadius: '2px',
-              background: 'var(--ink-bg)',
-              fontSize: '0.75rem',
-              fontFamily: 'var(--font-mono)',
-              border: '1px solid var(--ink-border)'
-            }}>
-              <span style={{ color: 'var(--ink-muted)' }}>LAST EMITTED // </span>
-              <span style={{ color: 'var(--ink-text)' }}>{lastSentMessage}</span>
-            </div>
-          </div>
         </div>
 
         {/* Right Column: Real-Time Posture Analytics, Classifier & Visibility Debug */}
@@ -1580,40 +1640,210 @@ export const Dashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Activity / Event Log */}
-          <div className="glass-panel" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column' }}>
-            <div className="panel-header">
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', letterSpacing: '0.06em', color: 'var(--ink-text)' }}>
-                CHANNEL ACTIVITY LOG
-              </span>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--ink-muted)' }}>
-                EVENT BUS
-              </span>
+        </div>
+      </div>
+
+      {/* Collapsible Advanced Diagnostics & Developer Simulation Panel */}
+      <div
+        className="glass-panel"
+        style={{
+          marginTop: '1.5rem',
+          padding: '0.85rem 1.25rem',
+          transition: 'all 0.2s ease'
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => setShowDiagnostics((prev) => !prev)}
+          style={{
+            width: '100%',
+            background: 'none',
+            border: 'none',
+            padding: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            cursor: 'pointer',
+            textAlign: 'left'
+          }}
+          aria-expanded={showDiagnostics}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: '0.75rem',
+                color: 'var(--ink-muted)',
+                display: 'inline-block',
+                width: '14px'
+              }}
+            >
+              {showDiagnostics ? '▼' : '►'}
+            </span>
+            <span
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: '0.75rem',
+                letterSpacing: '0.06em',
+                color: 'var(--ink-text)',
+                fontWeight: 600
+              }}
+            >
+              ADVANCED DIAGNOSTICS & SIMULATION BUS
+            </span>
+          </div>
+          <span
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.7rem',
+              color: 'var(--ink-muted)'
+            }}
+          >
+            {showDiagnostics ? '[ HIDE DEVELOPER TOOLS ]' : '[ SHOW DEVELOPER TOOLS ]'}
+          </span>
+        </button>
+
+        {showDiagnostics && (
+          <div
+            style={{
+              marginTop: '1.25rem',
+              paddingTop: '1rem',
+              borderTop: '1px solid var(--ink-border)',
+              display: 'grid',
+              gridTemplateColumns: 'minmax(0, 1.2fr) minmax(0, 1fr)',
+              gap: '1.25rem'
+            }}
+          >
+            {/* Left: Channel Activity Log */}
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginBottom: '0.5rem'
+                }}
+              >
+                <span
+                  style={{
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: '0.72rem',
+                    letterSpacing: '0.06em',
+                    color: 'var(--ink-text)'
+                  }}
+                >
+                  CHANNEL ACTIVITY LOG // EVENT BUS
+                </span>
+                {receivedMessages.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setReceivedMessages([])}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--ink-muted)',
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: '0.68rem',
+                      cursor: 'pointer',
+                      padding: 0
+                    }}
+                  >
+                    [ CLEAR LOG ]
+                  </button>
+                )}
+              </div>
+              <div
+                style={{
+                  height: '110px',
+                  backgroundColor: 'var(--ink-bg)',
+                  borderRadius: '2px',
+                  padding: '0.65rem',
+                  fontSize: '0.72rem',
+                  fontFamily: 'var(--font-mono)',
+                  overflowY: 'auto',
+                  border: '1px solid var(--ink-border)',
+                  color: 'var(--ink-muted)'
+                }}
+              >
+                {receivedMessages.length === 0 ? (
+                  <div style={{ color: 'var(--ink-muted)', fontStyle: 'italic' }}>
+                    No incoming channel events logged.
+                  </div>
+                ) : (
+                  receivedMessages.map((msg, idx) => (
+                    <div
+                      key={idx}
+                      style={{
+                        marginBottom: '0.25rem',
+                        wordBreak: 'break-all',
+                        color: 'var(--ink-text)'
+                      }}
+                    >
+                      {msg}
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
 
-            <div style={{
-              minHeight: '75px',
-              backgroundColor: 'var(--ink-bg)',
-              borderRadius: '2px',
-              padding: '0.65rem',
-              fontSize: '0.72rem',
-              fontFamily: 'var(--font-mono)',
-              overflowY: 'auto',
-              border: '1px solid var(--ink-border)',
-              color: 'var(--ink-muted)'
-            }}>
-              {receivedMessages.length === 0 ? (
-                <div style={{ color: 'var(--ink-muted)', fontStyle: 'italic' }}>No incoming channel events logged.</div>
-              ) : (
-                receivedMessages.map((msg, idx) => (
-                  <div key={idx} style={{ marginBottom: '0.25rem', wordBreak: 'break-all', color: 'var(--ink-text)' }}>
-                    {msg}
-                  </div>
-                ))
-              )}
+            {/* Right: Telemetry Bus Simulation Controls */}
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <div
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '0.72rem',
+                  letterSpacing: '0.06em',
+                  color: 'var(--ink-text)',
+                  marginBottom: '0.4rem'
+                }}
+              >
+                TELEMETRY BUS CONTROL // SIMULATION
+              </div>
+              <p
+                style={{
+                  fontSize: '0.75rem',
+                  color: 'var(--ink-muted)',
+                  marginBottom: '0.75rem',
+                  lineHeight: 1.4
+                }}
+              >
+                Transmit test events over BroadcastChannel to test browser tab intervention reactions.
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.65rem' }}>
+                <button
+                  id="btn-send-test-signal"
+                  className="btn btn-danger"
+                  onClick={handleSendTestSignal}
+                  style={{ fontSize: '0.75rem', padding: '0.4rem 0.6rem' }}
+                >
+                  Send Test (Slouching 2)
+                </button>
+                <button
+                  id="btn-clear-intervention"
+                  className="btn btn-secondary"
+                  onClick={handleSendClear}
+                  style={{ fontSize: '0.75rem', padding: '0.4rem 0.6rem' }}
+                >
+                  Clear Intervention
+                </button>
+              </div>
+              <div
+                style={{
+                  marginTop: '0.65rem',
+                  padding: '0.4rem 0.65rem',
+                  borderRadius: '2px',
+                  background: 'var(--ink-bg)',
+                  fontSize: '0.7rem',
+                  fontFamily: 'var(--font-mono)',
+                  border: '1px solid var(--ink-border)'
+                }}
+              >
+                <span style={{ color: 'var(--ink-muted)' }}>LAST EMITTED // </span>
+                <span style={{ color: 'var(--ink-text)' }}>{lastSentMessage}</span>
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Privacy Notice Modal Gate */}

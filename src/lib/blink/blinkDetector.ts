@@ -283,24 +283,36 @@ export class BlinkDetector {
     return { ...this.config };
   }
 
+  public getBlinkCount(): number {
+    return this.blinkCount;
+  }
+
+  public getBlinkTimestamps(): number[] {
+    return [...this.blinkTimestamps];
+  }
+
   /**
    * Resets internal detector state, timestamps, debouncer, and counters.
-   * Called when camera or vision session restarts.
+   * When fullReset is false (e.g. suspension/pause), temporal measurements
+   * (session start time, rolling window timestamps, low-blink accumulation)
+   * are cleanly reset so time spent outside Edge is not counted,
+   * while the accumulated historical blinkCount is preserved.
    */
   public reset(fullReset = true): void {
     this.state = 'OPEN';
     this.closedStartTimeMs = null;
     this.disqualifiedSustainedClosure = false;
+    this.sessionStartTimeMs = null;
+    this.blinkTimestamps = [];
+    this.lastBlinkDurationMs = null;
+    this.lastBlinkTimestampMs = null;
+    this.lowBlinkDebounceState = 'normal';
+    this.lowBlinkAccumulatingStartMs = null;
+    this.lowBlinkRecoveringStartMs = null;
+    this.lowBlinkRateAlert = false;
+
     if (fullReset) {
       this.blinkCount = 0;
-      this.lastBlinkDurationMs = null;
-      this.lastBlinkTimestampMs = null;
-      this.blinkTimestamps = [];
-      this.sessionStartTimeMs = null;
-      this.lowBlinkDebounceState = 'normal';
-      this.lowBlinkAccumulatingStartMs = null;
-      this.lowBlinkRecoveringStartMs = null;
-      this.lowBlinkRateAlert = false;
       this.lastValidLeftEAR = 0.3;
       this.lastValidRightEAR = 0.3;
       this.lastValidAverageEAR = 0.3;

@@ -1316,59 +1316,6 @@ a {
   }
 }
 
-/* Two-tab architecture diagram shown in step 5 completion */
-.two-tab-diagram {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  gap: 0.75rem;
-  align-items: center;
-  padding: 1rem;
-  background: var(--ink-bg);
-  border: 1px solid var(--ink-border);
-  border-radius: 4px;
-}
-
-.tab-box {
-  padding: 0.65rem 0.85rem;
-  border: 1px solid var(--ink-border);
-  border-radius: 3px;
-  text-align: center;
-}
-
-.tab-box--active {
-  border-color: var(--signal-good);
-  background: rgba(79, 216, 196, 0.06);
-}
-
-.tab-box__label {
-  font-family: var(--font-mono);
-  font-size: 0.65rem;
-  letter-spacing: 0.06em;
-  color: var(--ink-muted);
-  margin-bottom: 0.2rem;
-}
-
-.tab-box__name {
-  font-family: var(--font-mono);
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--ink-text);
-}
-
-.tab-box__status {
-  font-family: var(--font-mono);
-  font-size: 0.65rem;
-  color: var(--signal-good);
-  margin-top: 0.2rem;
-}
-
-.tab-arrow {
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-  color: var(--ink-muted);
-  text-align: center;
-}
-
 
 /* ==========================================================
    DEGRADATION & BLUR INTERVENTION STYLING
