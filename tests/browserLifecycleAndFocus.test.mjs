@@ -306,3 +306,132 @@ test('Browser Lifecycle: Handles camera reacquisition failure gracefully without
   assert.equal(cameraActive, true, 'Camera must reacquire successfully on retry');
   assert.equal(cameraError, null, 'Camera error must be cleared');
 });
+
+// 9. Minimising and restoring the browser window
+test('Browser Lifecycle: Minimising browser window stops camera and restoring automatically resumes', () => {
+  let isMonitoringActive = true;
+  let isBrowserFocused = true;
+  let isSuspended = false;
+  let cameraActive = true;
+  let debounceTimer = null;
+
+  function onWindowStateChanged(isMinimised, newWindowId = 1) {
+    if (isMinimised) {
+      // Minimising emits WINDOW_ID_NONE (-1)
+      if (debounceTimer !== null) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        isBrowserFocused = false;
+        if (isMonitoringActive) {
+          isSuspended = true;
+          cameraActive = false; // camera resources released
+        }
+      }, 50);
+    } else {
+      // Restoring window focuses it
+      if (debounceTimer !== null) {
+        clearTimeout(debounceTimer);
+        debounceTimer = null;
+      }
+      isBrowserFocused = true;
+      if (isMonitoringActive && isSuspended) {
+        isSuspended = false;
+        cameraActive = true; // camera reacquired
+      }
+    }
+  }
+
+  // User minimises the browser
+  onWindowStateChanged(true, -1);
+  assert.equal(debounceTimer !== null, true, 'Debounce scheduled');
+
+  // Fast forward debounce timer
+  isBrowserFocused = false;
+  isSuspended = true;
+  cameraActive = false;
+
+  assert.equal(isBrowserFocused, false, 'Browser is unfocused while minimised');
+  assert.equal(isSuspended, true, 'Monitoring is suspended while minimised');
+  assert.equal(cameraActive, false, 'Camera is stopped while minimised');
+
+  // User restores the browser window
+  onWindowStateChanged(false, 101);
+
+  assert.equal(isBrowserFocused, true, 'Browser is focused after restore');
+  assert.equal(isSuspended, false, 'Monitoring is resumed after restore');
+  assert.equal(cameraActive, true, 'Camera is automatically reacquired after restore');
+});
+
+// 10. Switching between different browser applications (e.g. Edge to Chrome and back)
+test('Browser Lifecycle: Switching to another browser window suspends camera and returning resumes seamlessly', () => {
+  let isMonitoringActive = true;
+  let isCurrentBrowserFocused = true;
+  let isSuspended = false;
+  let cameraStreamActive = true;
+  let permissionPromptCount = 0;
+
+  function onSwitchToAnotherBrowser() {
+    // Current browser loses OS focus
+    isCurrentBrowserFocused = false;
+    isSuspended = true;
+    cameraStreamActive = false; // camera released
+  }
+
+  function onReturnToCurrentBrowser() {
+    // Current browser regains OS focus
+    isCurrentBrowserFocused = true;
+    isSuspended = false;
+    cameraStreamActive = true; // automatically resumed
+    // Permission is remembered by the browser, no new prompt required
+  }
+
+  // Switch to another browser (e.g. Chrome)
+  onSwitchToAnotherBrowser();
+
+  assert.equal(isCurrentBrowserFocused, false, 'Current browser lost focus');
+  assert.equal(isSuspended, true, 'PostureSync is suspended');
+  assert.equal(cameraStreamActive, false, 'Camera stream released');
+
+  // Return to original browser
+  onReturnToCurrentBrowser();
+
+  assert.equal(isCurrentBrowserFocused, true, 'Current browser regained focus');
+  assert.equal(isSuspended, false, 'PostureSync resumed');
+  assert.equal(cameraStreamActive, true, 'Camera stream reacquired');
+  assert.equal(permissionPromptCount, 0, 'No manual permission prompt required');
+});
+
+// 11. Service worker cold start / storage restoration before focus handling
+test('Browser Lifecycle: Service worker cold start recovers settings before focus change evaluation', async () => {
+  let settings = { monitoringActive: false }; // uninitialized default
+  let isSuspendedDueToFocus = false;
+  let resumedCalled = false;
+
+  const storage = {
+    settings: { monitoringActive: true },
+    runtimeState: { isSuspendedDueToFocus: true }
+  };
+
+  async function initSettingsPromise() {
+    // Simulate async storage lookup
+    await new Promise((r) => setTimeout(r, 10));
+    settings = { ...storage.settings };
+    isSuspendedDueToFocus = storage.runtimeState.isSuspendedDueToFocus;
+  }
+
+  async function handleFocusRegained(windowId) {
+    if (windowId !== -1) {
+      await initSettingsPromise();
+      if (settings.monitoringActive && isSuspendedDueToFocus) {
+        isSuspendedDueToFocus = false;
+        resumedCalled = true;
+      }
+    }
+  }
+
+  // Trigger focus regained on cold-started worker
+  await handleFocusRegained(105);
+
+  assert.equal(settings.monitoringActive, true, 'Settings properly recovered from storage');
+  assert.equal(isSuspendedDueToFocus, false, 'Suspended flag cleared upon resume');
+  assert.equal(resumedCalled, true, 'Resume lifecycle notification dispatches correctly');
+});

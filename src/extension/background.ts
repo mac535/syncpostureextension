@@ -102,6 +102,15 @@ async function initSettings(): Promise<void> {
 }
 const initSettingsPromise = initSettings();
 
+// Check initial window focus on service worker boot
+if (typeof chrome !== 'undefined' && chrome.windows && chrome.windows.getAll) {
+  chrome.windows.getAll((wins) => {
+    if (chrome.runtime.lastError || !wins) return;
+    const hasFocusedNormalWindow = wins.some((w) => w.focused && w.type !== 'popup');
+    isEdgeAppFocused = hasFocusedNormalWindow;
+  });
+}
+
 function isRestrictedUrl(url?: string): boolean {
   if (!url) return true;
   return (
@@ -181,24 +190,23 @@ function notifyMonitorLifecycle(action: 'SUSPEND' | 'RESUME' | 'STOP'): void {
   }
 }
 
-// Edge Application Focus Detection:
+// Edge / Browser Application Focus Detection:
 // Window focus is monitored via chrome.windows.onFocusChanged.
-// When windowId === WINDOW_ID_NONE, Microsoft Edge has lost foreground OS application focus.
+// When windowId === WINDOW_ID_NONE, the browser has lost foreground OS application focus
+// (user switched to another desktop application or another browser).
 if (typeof chrome !== 'undefined' && chrome.windows && chrome.windows.onFocusChanged) {
   chrome.windows.onFocusChanged.addListener((windowId) => {
-    if (focusDebounceTimeout !== null) {
-      clearTimeout(focusDebounceTimeout);
-      focusDebounceTimeout = null;
-    }
-
     if (windowId === chrome.windows.WINDOW_ID_NONE) {
-      // Edge has lost foreground application focus (user switched to another desktop application).
-      // A 500 ms debounce is used instead of a shorter value because opening or closing the
-      // extension popup creates a transient browser window whose open/close cycle briefly
-      // emits WINDOW_ID_NONE before the original Edge window re-registers as focused. On most
-      // machines this round-trip takes 150–300 ms; 500 ms absorbs it safely while still
-      // responding quickly to genuine Alt-Tab application switches.
-      focusDebounceTimeout = setTimeout(() => {
+      if (focusDebounceTimeout !== null) {
+        clearTimeout(focusDebounceTimeout);
+        focusDebounceTimeout = null;
+      }
+
+      // Browser lost foreground application focus (user switched to another browser or desktop application).
+      // A 500 ms debounce absorbs transient OS window transitions (e.g. extension popup open/close).
+      focusDebounceTimeout = setTimeout(async () => {
+        focusDebounceTimeout = null;
+        await initSettingsPromise;
         isEdgeAppFocused = false;
         if (settings.monitoringActive) {
           isSuspendedDueToFocus = true;
@@ -244,24 +252,24 @@ if (typeof chrome !== 'undefined' && chrome.windows && chrome.windows.onFocusCha
           notifyMonitorLifecycle('SUSPEND');
           persistTelemetrySnapshot();
         }
-      }, 500); // 500 ms: safely longer than the popup open/close OS focus transition
+      }, 500);
     } else {
-      // A browser window gained focus. Before treating this as a genuine application-level RESUME,
-      // check whether the window is the extension popup (window.type === 'popup'). If so, do NOT
-      // clear the debounce timer and do NOT trigger a RESUME — the popup opening/closing is not
-      // an application switch; it is still Edge in the foreground.
-      chrome.windows.get(windowId, (win) => {
-        if (chrome.runtime.lastError) {
-          // Window was already closed before inspection; treat as a normal window conservatively.
+      chrome.windows.get(windowId, async (win) => {
+        if (chrome.runtime.lastError || !win) {
+          return;
         }
-        if (win && win.type === 'popup') {
-          // Extension popup window took focus: not an OS application switch.
-          // Leave any pending WINDOW_ID_NONE debounce timer running so that if the
-          // popup is the *only* thing focused (unlikely but possible) we still suspend.
+        if (win.type === 'popup') {
+          // Extension popup window took focus: leave any pending debounce timer running
           return;
         }
 
-        // A normal browser (tab) window is now the foreground application.
+        // A normal browser window is now the foreground application: cancel any pending suspension timer
+        if (focusDebounceTimeout !== null) {
+          clearTimeout(focusDebounceTimeout);
+          focusDebounceTimeout = null;
+        }
+
+        await initSettingsPromise;
         isEdgeAppFocused = true;
         if (settings.monitoringActive && isSuspendedDueToFocus) {
           isSuspendedDueToFocus = false;

@@ -41,23 +41,34 @@ export const Dashboard: React.FC = () => {
   const isSuspended = isMonitoringActive && !isAppFocused;
   const isCameraEnabled = hasConsent && !userDeclinedConsent && isMonitoringActive;
 
-  // Edge Application Focus Detection:
+  // Edge / Browser Application Focus Detection:
   // In the extension context, the background service worker is the sole authority for focus state.
   // It sends APPLICATION_FOCUS_LIFECYCLE messages (handled in the runtime message listener below)
-  // which drive setIsAppFocused here. A duplicate chrome.windows.onFocusChanged listener in the
-  // Dashboard would create a second independent state machine that can race with the background
-  // and falsely suspend monitoring when the extension popup opens/closes.
-  //
-  // The fallback window.focus/blur handler below is only active in local dev environments where
-  // the chrome.windows API is unavailable (e.g. running via `vite dev`).
+  // which drive setIsAppFocused here.
+  // We NEVER listen to window.blur or document.visibilitychange in the extension context,
+  // because switching tabs in the same browser fires window.blur on the monitor tab!
   useEffect(() => {
-    if (typeof chrome !== 'undefined' && chrome.windows && chrome.windows.onFocusChanged) {
-      // Production extension: focus state is driven exclusively by APPLICATION_FOCUS_LIFECYCLE
-      // messages from the background service worker. No listener registered here.
+    const isExtension = typeof chrome !== 'undefined' && Boolean(chrome.runtime?.id);
+    if (isExtension) {
+      // Query initial status snapshot from background on mount so initial focus & suspension states are synchronized
+      if (chrome.runtime && chrome.runtime.sendMessage) {
+        chrome.runtime.sendMessage({ type: 'GET_STATUS' }, (res) => {
+          if (chrome.runtime.lastError || !res) return;
+          if (typeof res.isEdgeAppFocused === 'boolean') {
+            setIsAppFocused(res.isEdgeAppFocused);
+          }
+          if (typeof res.monitoringActive === 'boolean') {
+            setIsMonitoringActive(res.monitoringActive);
+          }
+          if (res.isSuspended) {
+            setIsAppFocused(false);
+          }
+        });
+      }
       return;
     }
 
-    // Fallback for dev / environments without chrome.windows API
+    // Fallback for dev / environments without chrome extension runtime (e.g. running standalone via `vite dev`)
     let focusDebounceTimer: ReturnType<typeof setTimeout> | null = null;
     const onFocus = () => setIsAppFocused(true);
     const onBlur = () => {
@@ -151,6 +162,10 @@ export const Dashboard: React.FC = () => {
   });
 
   const sequenceCounter = useRef<number>(0);
+  const blinkCountRef = useRef<number>(blinkCount);
+  useEffect(() => {
+    blinkCountRef.current = blinkCount;
+  }, [blinkCount]);
 
   // When suspended due to Edge losing focus: reset temporal debouncer and clear active tab blur
   useEffect(() => {
@@ -181,7 +196,7 @@ export const Dashboard: React.FC = () => {
             alertLevel: 0,
             blurPx: 0,
             alertMessage: '',
-            blinkCount,
+            blinkCount: blinkCountRef.current,
             blinksPerMinute: null,
             blinkRateStatus: 'collecting',
             lowBlinkRate: false,
@@ -197,7 +212,7 @@ export const Dashboard: React.FC = () => {
         }).catch(() => {});
       }
     }
-  }, [isSuspended, blinkCount, blinkObservationPeriodSec]);
+  }, [isSuspended, blinkObservationPeriodSec]);
 
   const postureMetricsRef = useRef(postureMetrics);
   useEffect(() => {

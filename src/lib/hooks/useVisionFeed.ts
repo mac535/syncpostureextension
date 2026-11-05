@@ -292,6 +292,7 @@ export function useVisionFeed(options: UseVisionFeedOptions = {}): UseVisionFeed
         streamRef.current = stream;
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
+          videoRef.current.play().catch(() => {});
           setCameraActive(true);
         }
       } catch (err: unknown) {
