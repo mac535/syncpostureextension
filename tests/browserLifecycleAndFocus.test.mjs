@@ -5,21 +5,19 @@ import assert from 'node:assert/strict';
  * Test Suite: Browser Lifecycle, Edge Application Focus Detection, and Resource Management
  */
 
-// 1. Edge Focus Lost while monitoring is running
-test('Browser Lifecycle: Edge focus lost suspends monitoring and releases camera stream', () => {
+// 1. Edge Window Minimised while monitoring is running
+test('Browser Lifecycle: Edge window minimised suspends monitoring and releases camera stream', () => {
   let isMonitoringActive = true;
-  let isEdgeAppFocused = true;
   let isSuspended = false;
   let cameraStreamActive = true;
   let inferenceLoopRunning = true;
   let releasedTracksCount = 0;
 
-  function simulateWindowFocusChanged(windowId, WINDOW_ID_NONE = -1) {
-    if (windowId === WINDOW_ID_NONE) {
-      isEdgeAppFocused = false;
+  function simulateWindowStateChanged(windows) {
+    const hasVisibleWindow = windows.some((w) => w.type !== 'popup' && w.state !== 'minimized');
+    if (!hasVisibleWindow) {
       if (isMonitoringActive) {
         isSuspended = true;
-        // Resource cleanup on suspension
         if (cameraStreamActive) {
           releasedTracksCount++;
           cameraStreamActive = false;
@@ -27,7 +25,6 @@ test('Browser Lifecycle: Edge focus lost suspends monitoring and releases camera
         inferenceLoopRunning = false;
       }
     } else {
-      isEdgeAppFocused = true;
       if (isMonitoringActive && isSuspended) {
         isSuspended = false;
         cameraStreamActive = true;
@@ -36,29 +33,27 @@ test('Browser Lifecycle: Edge focus lost suspends monitoring and releases camera
     }
   }
 
-  // Edge window loses OS focus to another desktop app
-  simulateWindowFocusChanged(-1);
+  // Edge window is minimised to taskbar (all normal windows have state === 'minimized')
+  simulateWindowStateChanged([{ id: 1, type: 'normal', state: 'minimized', focused: false }]);
 
-  assert.equal(isEdgeAppFocused, false, 'Edge app must be marked unfocused');
-  assert.equal(isSuspended, true, 'Monitoring must transition to suspended state');
+  assert.equal(isSuspended, true, 'Monitoring must transition to suspended state when minimised');
   assert.equal(cameraStreamActive, false, 'Camera stream must be released during suspension');
   assert.equal(inferenceLoopRunning, false, 'Inference loop must stop during suspension');
   assert.equal(releasedTracksCount, 1, 'Webcam tracks must be stopped once');
   assert.equal(isMonitoringActive, true, 'User monitoring-enabled preference must be preserved');
 });
 
-// 2. Edge Focus Regained while monitoring is enabled
-test('Browser Lifecycle: Edge focus regained automatically resumes camera and inference', () => {
+// 2. Edge Window Restored from taskbar automatically resumes camera and inference
+test('Browser Lifecycle: Edge window restored automatically resumes camera and inference', () => {
   let isMonitoringActive = true;
-  let isEdgeAppFocused = false;
   let isSuspended = true;
   let cameraStreamActive = false;
   let inferenceLoopRunning = false;
   let activeLoopCount = 0;
 
-  function resumeOnFocus(windowId, WINDOW_ID_NONE = -1) {
-    if (windowId !== WINDOW_ID_NONE) {
-      isEdgeAppFocused = true;
+  function simulateWindowStateChanged(windows) {
+    const hasVisibleWindow = windows.some((w) => w.type !== 'popup' && w.state !== 'minimized');
+    if (hasVisibleWindow) {
       if (isMonitoringActive && isSuspended) {
         isSuspended = false;
         cameraStreamActive = true;
@@ -70,14 +65,53 @@ test('Browser Lifecycle: Edge focus regained automatically resumes camera and in
     }
   }
 
-  // User clicks back to Edge
-  resumeOnFocus(101);
+  // User restores Edge from taskbar (state becomes 'normal' or 'maximized')
+  simulateWindowStateChanged([{ id: 1, type: 'normal', state: 'normal', focused: true }]);
 
-  assert.equal(isEdgeAppFocused, true, 'Edge app must be marked focused');
   assert.equal(isSuspended, false, 'Monitoring must no longer be suspended');
   assert.equal(cameraStreamActive, true, 'Webcam stream must be safely reacquired');
   assert.equal(inferenceLoopRunning, true, 'Inference loop must be running');
   assert.equal(activeLoopCount, 1, 'Exactly one inference loop must exist');
+});
+
+// 2b. Split-screen / Side-by-side usage with WhatsApp: Edge loses focus but window is visible, camera stays ON
+test('Browser Lifecycle: Split-screen side-by-side with WhatsApp keeps camera ON when interacting with WhatsApp', () => {
+  let isMonitoringActive = true;
+  let isSuspended = false;
+  let cameraStreamActive = true;
+  let inferenceExecutionCount = 0;
+
+  function simulateWindowFocusAndState(windows, _focusedWindowId) {
+    // Check if Edge has any unminimised window visible on screen
+    const hasVisibleWindow = windows.some((w) => w.type !== 'popup' && w.state !== 'minimized');
+    if (!hasVisibleWindow) {
+      isSuspended = true;
+      cameraStreamActive = false;
+    } else {
+      // Regardless of whether Edge or WhatsApp has focus, if Edge window is visible (normal/maximized), camera stays ON!
+      isSuspended = false;
+      cameraStreamActive = true;
+    }
+  }
+
+  function runInferenceTick() {
+    if (isMonitoringActive && !isSuspended) {
+      inferenceExecutionCount++;
+    }
+  }
+
+  // Edge and WhatsApp snapped side-by-side. Edge window state is 'normal'.
+  // User clicks WhatsApp: focusedWindowId is -1 (WINDOW_ID_NONE for Edge)
+  const windows = [{ id: 10, type: 'normal', state: 'normal', focused: false }];
+  simulateWindowFocusAndState(windows, -1);
+
+  assert.equal(isSuspended, false, 'Monitoring must NOT suspend in split-screen when WhatsApp is clicked');
+  assert.equal(cameraStreamActive, true, 'Camera MUST remain active while Edge is visible side-by-side');
+
+  // Inference continues running while user interacts with WhatsApp
+  runInferenceTick();
+  runInferenceTick();
+  assert.equal(inferenceExecutionCount, 2, 'Posture inference runs continuously during split-screen usage');
 });
 
 // 3. Switching between Edge tabs without unnecessarily stopping monitoring
@@ -315,7 +349,7 @@ test('Browser Lifecycle: Minimising browser window stops camera and restoring au
   let cameraActive = true;
   let debounceTimer = null;
 
-  function onWindowStateChanged(isMinimised, newWindowId = 1) {
+  function onWindowStateChanged(isMinimised, _newWindowId = 1) {
     if (isMinimised) {
       // Minimising emits WINDOW_ID_NONE (-1)
       if (debounceTimer !== null) clearTimeout(debounceTimer);
@@ -361,9 +395,9 @@ test('Browser Lifecycle: Minimising browser window stops camera and restoring au
   assert.equal(cameraActive, true, 'Camera is automatically reacquired after restore');
 });
 
-// 10. Switching between different browser applications (e.g. Edge to Chrome and back)
-test('Browser Lifecycle: Switching to another browser window suspends camera and returning resumes seamlessly', () => {
-  let isMonitoringActive = true;
+// 10. Minimising Edge when switching to another browser application suspends camera and returning resumes seamlessly
+test('Browser Lifecycle: Minimising Edge when switching away suspends camera and returning resumes seamlessly', () => {
+  let _isMonitoringActive = true;
   let isCurrentBrowserFocused = true;
   let isSuspended = false;
   let cameraStreamActive = true;

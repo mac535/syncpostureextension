@@ -69,20 +69,17 @@ export const Dashboard: React.FC = () => {
     }
 
     // Fallback for dev / environments without chrome extension runtime (e.g. running standalone via `vite dev`)
-    let focusDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-    const onFocus = () => setIsAppFocused(true);
-    const onBlur = () => {
-      if (focusDebounceTimer !== null) clearTimeout(focusDebounceTimer);
-      focusDebounceTimer = setTimeout(() => {
+    // Only suspend if the document is actually hidden (e.g. minimised), NEVER on window.blur (so split-screen remains active)
+    const onVisibilityChange = () => {
+      if (document.hidden) {
         setIsAppFocused(false);
-      }, 500);
+      } else {
+        setIsAppFocused(true);
+      }
     };
-    window.addEventListener('focus', onFocus);
-    window.addEventListener('blur', onBlur);
+    document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
-      if (focusDebounceTimer !== null) clearTimeout(focusDebounceTimer);
-      window.removeEventListener('focus', onFocus);
-      window.removeEventListener('blur', onBlur);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, []);
 
@@ -1072,10 +1069,10 @@ export const Dashboard: React.FC = () => {
                 <div style={{ textAlign: 'center', padding: '1.75rem 1.25rem', color: 'var(--ink-text)' }}>
                   <VideoOff size={32} style={{ margin: '0 auto 0.75rem', color: 'var(--ink-muted)' }} />
                   <p style={{ fontWeight: 600, fontFamily: 'var(--font-mono)', fontSize: '0.85rem', color: 'var(--ink-text)', letterSpacing: '0.04em' }}>
-                    APPLICATION INACTIVE — INFERENCE SUSPENDED
+                    APPLICATION MINIMISED — INFERENCE SUSPENDED
                   </p>
                   <p style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', margin: '0.4rem auto 0', maxWidth: '340px', lineHeight: 1.45 }}>
-                    Camera tracks released and MediaPipe inference paused while working outside Microsoft Edge. Monitoring automatically resumes when Edge is focused.
+                    Camera tracks released and MediaPipe inference paused while the browser window is minimised. Monitoring automatically resumes when restored.
                   </p>
                 </div>
               ) : !hasConsent || userDeclinedConsent ? (

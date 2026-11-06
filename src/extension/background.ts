@@ -102,12 +102,12 @@ async function initSettings(): Promise<void> {
 }
 const initSettingsPromise = initSettings();
 
-// Check initial window focus on service worker boot
+// Check initial window visibility on service worker boot
 if (typeof chrome !== 'undefined' && chrome.windows && chrome.windows.getAll) {
   chrome.windows.getAll((wins) => {
     if (chrome.runtime.lastError || !wins) return;
-    const hasFocusedNormalWindow = wins.some((w) => w.focused && w.type !== 'popup');
-    isEdgeAppFocused = hasFocusedNormalWindow;
+    const hasVisibleNormalWindow = wins.some((w) => w.type !== 'popup' && w.state !== 'minimized');
+    isEdgeAppFocused = hasVisibleNormalWindow;
   });
 }
 
@@ -190,104 +190,143 @@ function notifyMonitorLifecycle(action: 'SUSPEND' | 'RESUME' | 'STOP'): void {
   }
 }
 
-// Edge / Browser Application Focus Detection:
-// Window focus is monitored via chrome.windows.onFocusChanged.
-// When windowId === WINDOW_ID_NONE, the browser has lost foreground OS application focus
-// (user switched to another desktop application or another browser).
-if (typeof chrome !== 'undefined' && chrome.windows && chrome.windows.onFocusChanged) {
-  chrome.windows.onFocusChanged.addListener((windowId) => {
-    if (windowId === chrome.windows.WINDOW_ID_NONE) {
+// Edge / Browser Application Window Visibility & Lifecycle Detection:
+// Window lifecycle is tracked via chrome.windows.onBoundsChanged and onFocusChanged.
+// The camera MUST remain active whenever the browser window is visible on screen,
+// including:
+//   1. Switching between tabs in the same browser.
+//   2. Split-screen / side-by-side usage (e.g. Edge on left, WhatsApp on right, even when WhatsApp has input focus).
+// Only when the browser window is MINIMISED to the taskbar is the camera paused and stream released.
+// When the window is restored, the camera automatically resumes immediately without user intervention.
+async function checkWindowVisibilityAndSync(): Promise<void> {
+  if (typeof chrome === 'undefined' || !chrome.windows || !chrome.windows.getAll) {
+    return;
+  }
+
+  await initSettingsPromise;
+  if (!settings.monitoringActive) {
+    return;
+  }
+
+  try {
+    const wins = await chrome.windows.getAll();
+    if (!wins || wins.length === 0) return;
+
+    // Filter to normal/app browser windows (ignoring extension popup windows)
+    const browserWindows = wins.filter((w) => w.type !== 'popup');
+    if (browserWindows.length === 0) return;
+
+    // A window is visible on screen if it is NOT minimised to the taskbar
+    const hasVisibleWindow = browserWindows.some((w) => w.state !== 'minimized');
+
+    if (hasVisibleWindow) {
+      // At least one browser window is visible on screen (e.g. full-screen, side-by-side split screen, or active tab browsing)
       if (focusDebounceTimeout !== null) {
         clearTimeout(focusDebounceTimeout);
         focusDebounceTimeout = null;
       }
 
-      // Browser lost foreground application focus (user switched to another browser or desktop application).
-      // A 500 ms debounce absorbs transient OS window transitions (e.g. extension popup open/close).
+      isEdgeAppFocused = true;
+      if (isSuspendedDueToFocus) {
+        isSuspendedDueToFocus = false;
+        currentSuspensionReason = null;
+        isInitializing = true;
+        sequenceNumber = Math.max(Date.now(), sequenceNumber + 1);
+
+        latestTelemetry.monitoringStatus = 'initializing';
+        latestTelemetry.suspensionReason = null;
+        latestTelemetry.sequenceNumber = sequenceNumber;
+        latestTelemetry.timestamp = Date.now();
+
+        notifyMonitorLifecycle('RESUME');
+        persistTelemetrySnapshot();
+      }
+    } else {
+      // ALL browser windows are minimised to taskbar: schedule suspension
+      if (focusDebounceTimeout !== null) {
+        clearTimeout(focusDebounceTimeout);
+      }
+
       focusDebounceTimeout = setTimeout(async () => {
         focusDebounceTimeout = null;
         await initSettingsPromise;
-        isEdgeAppFocused = false;
-        if (settings.monitoringActive) {
-          isSuspendedDueToFocus = true;
-          currentSuspensionReason = 'edge_unfocused';
-          isInitializing = false;
-          sequenceNumber = Math.max(Date.now(), sequenceNumber + 1);
+        if (!settings.monitoringActive) return;
 
-          // Clear active webpage blur so tabs are not frozen in a blurred state while user is away
-          if (isAlertActive) {
-            broadcastToTabs(
-              {
-                type: 'APPLY_PROGRESSIVE_BLUR',
-                alertLevel: 0,
-                blurPx: 0,
-                message: '',
-                status: 'good',
-                soundEnabled: false,
-                isRecovering: true
-              },
-              false
-            );
-            isAlertActive = false;
+        try {
+          const currentWins = await chrome.windows.getAll();
+          const stillAllMinimised = currentWins
+            .filter((w) => w.type !== 'popup')
+            .every((w) => w.state === 'minimized');
+
+          if (stillAllMinimised && !isSuspendedDueToFocus) {
+            isEdgeAppFocused = false;
+            isSuspendedDueToFocus = true;
+            currentSuspensionReason = 'edge_unfocused';
+            isInitializing = false;
+            sequenceNumber = Math.max(Date.now(), sequenceNumber + 1);
+
+            // Clear active webpage blur so tabs are not frozen in a blurred state while user is away
+            if (isAlertActive) {
+              broadcastToTabs(
+                {
+                  type: 'APPLY_PROGRESSIVE_BLUR',
+                  alertLevel: 0,
+                  blurPx: 0,
+                  message: '',
+                  status: 'good',
+                  soundEnabled: false,
+                  isRecovering: true
+                },
+                false
+              );
+              isAlertActive = false;
+            }
+
+            latestTelemetry = {
+              ...latestTelemetry,
+              status: 'good',
+              severity: 0,
+              intensity: 0,
+              debouncerState: 'idle',
+              accumulatingMs: 0,
+              alertLevel: 0,
+              blurPx: 0,
+              alertMessage: '',
+              blinksPerMinute: null, // live rate marked unavailable during suspension
+              trackingStatus: 'lost',
+              monitoringStatus: 'suspended',
+              suspensionReason: 'edge_unfocused',
+              sequenceNumber,
+              timestamp: Date.now()
+            };
+
+            notifyMonitorLifecycle('SUSPEND');
+            persistTelemetrySnapshot();
           }
-
-          latestTelemetry = {
-            ...latestTelemetry,
-            status: 'good',
-            severity: 0,
-            intensity: 0,
-            debouncerState: 'idle',
-            accumulatingMs: 0,
-            alertLevel: 0,
-            blurPx: 0,
-            alertMessage: '',
-            blinksPerMinute: null, // live rate marked unavailable during suspension
-            trackingStatus: 'lost',
-            monitoringStatus: 'suspended',
-            suspensionReason: 'edge_unfocused',
-            sequenceNumber,
-            timestamp: Date.now()
-          };
-
-          notifyMonitorLifecycle('SUSPEND');
-          persistTelemetrySnapshot();
-        }
+        } catch {}
       }, 500);
-    } else {
-      chrome.windows.get(windowId, async (win) => {
-        if (chrome.runtime.lastError || !win) {
-          return;
-        }
-        if (win.type === 'popup') {
-          // Extension popup window took focus: leave any pending debounce timer running
-          return;
-        }
-
-        // A normal browser window is now the foreground application: cancel any pending suspension timer
-        if (focusDebounceTimeout !== null) {
-          clearTimeout(focusDebounceTimeout);
-          focusDebounceTimeout = null;
-        }
-
-        await initSettingsPromise;
-        isEdgeAppFocused = true;
-        if (settings.monitoringActive && isSuspendedDueToFocus) {
-          isSuspendedDueToFocus = false;
-          currentSuspensionReason = null;
-          isInitializing = true;
-          sequenceNumber = Math.max(Date.now(), sequenceNumber + 1);
-
-          latestTelemetry.monitoringStatus = 'initializing';
-          latestTelemetry.suspensionReason = null;
-          latestTelemetry.sequenceNumber = sequenceNumber;
-          latestTelemetry.timestamp = Date.now();
-
-          notifyMonitorLifecycle('RESUME');
-          persistTelemetrySnapshot();
-        }
-      });
     }
-  });
+  } catch {}
+}
+
+if (typeof chrome !== 'undefined' && chrome.windows) {
+  // onBoundsChanged fires when window is minimized, restored, maximized, or resized
+  if (chrome.windows.onBoundsChanged) {
+    chrome.windows.onBoundsChanged.addListener(() => {
+      checkWindowVisibilityAndSync();
+    });
+  }
+  // onFocusChanged fires on window focus transitions (including when minimizing or restoring windows)
+  if (chrome.windows.onFocusChanged) {
+    chrome.windows.onFocusChanged.addListener(() => {
+      checkWindowVisibilityAndSync();
+    });
+  }
+  if (chrome.windows.onCreated) {
+    chrome.windows.onCreated.addListener(() => {
+      checkWindowVisibilityAndSync();
+    });
+  }
 }
 
 // ---------- Screen-Session Break Reminder Engine ----------
