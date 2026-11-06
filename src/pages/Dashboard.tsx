@@ -65,7 +65,21 @@ export const Dashboard: React.FC = () => {
           }
         });
       }
-      return;
+
+      // If monitor.html is itself the active tab, report visibility changes so native window occlusion is detected
+      const onVisChange = () => {
+        try {
+          chrome.runtime.sendMessage({
+            type: 'TAB_VISIBILITY_CHANGE',
+            visibilityState: document.visibilityState,
+            timestamp: Date.now()
+          }).catch(() => {});
+        } catch {}
+      };
+      document.addEventListener('visibilitychange', onVisChange);
+      return () => {
+        document.removeEventListener('visibilitychange', onVisChange);
+      };
     }
 
     // Fallback for dev / environments without chrome extension runtime (e.g. running standalone via `vite dev`)
@@ -288,6 +302,17 @@ export const Dashboard: React.FC = () => {
             }
           }
           sendResponse?.({ success: true });
+          break;
+        }
+        case 'QUERY_TAB_VISIBILITY': {
+          try {
+            chrome.runtime.sendMessage({
+              type: 'TAB_VISIBILITY_CHANGE',
+              visibilityState: document.visibilityState,
+              timestamp: Date.now()
+            }).catch(() => {});
+          } catch {}
+          sendResponse?.({ visibilityState: document.visibilityState });
           break;
         }
       }
@@ -1069,10 +1094,10 @@ export const Dashboard: React.FC = () => {
                 <div style={{ textAlign: 'center', padding: '1.75rem 1.25rem', color: 'var(--ink-text)' }}>
                   <VideoOff size={32} style={{ margin: '0 auto 0.75rem', color: 'var(--ink-muted)' }} />
                   <p style={{ fontWeight: 600, fontFamily: 'var(--font-mono)', fontSize: '0.85rem', color: 'var(--ink-text)', letterSpacing: '0.04em' }}>
-                    APPLICATION MINIMISED — INFERENCE SUSPENDED
+                    APPLICATION INACTIVE — INFERENCE SUSPENDED
                   </p>
                   <p style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', margin: '0.4rem auto 0', maxWidth: '340px', lineHeight: 1.45 }}>
-                    Camera tracks released and MediaPipe inference paused while the browser window is minimised. Monitoring automatically resumes when restored.
+                    Camera tracks released and MediaPipe inference paused while the browser is minimised or completely covered. Monitoring automatically resumes when visible.
                   </p>
                 </div>
               ) : !hasConsent || userDeclinedConsent ? (

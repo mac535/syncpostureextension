@@ -21,6 +21,7 @@ let currentSuspensionReason: SuspensionReason = null;
 let isInitializing: boolean = false;
 let sequenceNumber: number = Date.now();
 let focusDebounceTimeout: ReturnType<typeof setTimeout> | null = null;
+let isOccludedDueToNativeCover: boolean = false;
 
 let latestTelemetry: PostureTelemetryPayload = {
   status: 'good',
@@ -220,6 +221,12 @@ async function checkWindowVisibilityAndSync(): Promise<void> {
     const hasVisibleWindow = browserWindows.some((w) => w.state !== 'minimized');
 
     if (hasVisibleWindow) {
+      if (isOccludedDueToNativeCover) {
+        // Window is not minimized, but currently occluded by another native app covering it completely.
+        // Remain suspended until tab reports visible.
+        return;
+      }
+
       // At least one browser window is visible on screen (e.g. full-screen, side-by-side split screen, or active tab browsing)
       if (focusDebounceTimeout !== null) {
         clearTimeout(focusDebounceTimeout);
@@ -318,7 +325,11 @@ if (typeof chrome !== 'undefined' && chrome.windows) {
   }
   // onFocusChanged fires on window focus transitions (including when minimizing or restoring windows)
   if (chrome.windows.onFocusChanged) {
-    chrome.windows.onFocusChanged.addListener(() => {
+    chrome.windows.onFocusChanged.addListener((windowId) => {
+      if (windowId !== chrome.windows.WINDOW_ID_NONE) {
+        // A browser window gained OS focus: it is on top and no longer occluded
+        isOccludedDueToNativeCover = false;
+      }
       checkWindowVisibilityAndSync();
     });
   }
@@ -326,6 +337,123 @@ if (typeof chrome !== 'undefined' && chrome.windows) {
     chrome.windows.onCreated.addListener(() => {
       checkWindowVisibilityAndSync();
     });
+  }
+}
+
+// Handle active tab document visibility changes (Native Window Occlusion on Windows)
+// When another native app (Edge, WhatsApp, Word) completely covers the browser window,
+// Chromium's NativeWindowOcclusionTrackerWin changes document.visibilityState to 'hidden'.
+// In split-screen / side-by-side or partial visibility, it remains 'visible'.
+async function handleActiveTabVisibilityChange(tabId: number | undefined, isVisible: boolean): Promise<void> {
+  await initSettingsPromise;
+  if (!settings.monitoringActive) return;
+
+  // Verify whether this tab is indeed the active tab in its window
+  if (tabId !== undefined && typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.get) {
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      if (!tab.active) {
+        return;
+      }
+    } catch {
+      return;
+    }
+  }
+
+  if (isVisible) {
+    // Active tab is visible on screen (split-screen, side-by-side, or active foreground)
+    if (focusDebounceTimeout !== null) {
+      clearTimeout(focusDebounceTimeout);
+      focusDebounceTimeout = null;
+    }
+
+    isOccludedDueToNativeCover = false;
+    isEdgeAppFocused = true;
+
+    if (isSuspendedDueToFocus) {
+      isSuspendedDueToFocus = false;
+      currentSuspensionReason = null;
+      isInitializing = true;
+      sequenceNumber = Math.max(Date.now(), sequenceNumber + 1);
+
+      latestTelemetry.monitoringStatus = 'initializing';
+      latestTelemetry.suspensionReason = null;
+      latestTelemetry.sequenceNumber = sequenceNumber;
+      latestTelemetry.timestamp = Date.now();
+
+      notifyMonitorLifecycle('RESUME');
+      persistTelemetrySnapshot();
+    }
+  } else {
+    // Active tab reported 'hidden'.
+    // If not already suspended, schedule suspension after debounce (500ms).
+    // Tab switching within the browser cancels this timer via chrome.tabs.onActivated.
+    if (isSuspendedDueToFocus) return;
+
+    if (focusDebounceTimeout !== null) {
+      clearTimeout(focusDebounceTimeout);
+    }
+
+    focusDebounceTimeout = setTimeout(async () => {
+      focusDebounceTimeout = null;
+      await initSettingsPromise;
+      if (!settings.monitoringActive) return;
+
+      try {
+        const wins = await chrome.windows.getAll();
+        const browserWindows = wins.filter((w) => w.type !== 'popup');
+        const hasVisibleWindow = browserWindows.some((w) => w.state !== 'minimized');
+
+        if (hasVisibleWindow) {
+          isOccludedDueToNativeCover = true;
+        }
+
+        if (!isSuspendedDueToFocus) {
+          isEdgeAppFocused = false;
+          isSuspendedDueToFocus = true;
+          currentSuspensionReason = 'edge_unfocused';
+          isInitializing = false;
+          sequenceNumber = Math.max(Date.now(), sequenceNumber + 1);
+
+          if (isAlertActive) {
+            broadcastToTabs(
+              {
+                type: 'APPLY_PROGRESSIVE_BLUR',
+                alertLevel: 0,
+                blurPx: 0,
+                message: '',
+                status: 'good',
+                soundEnabled: false,
+                isRecovering: true
+              },
+              false
+            );
+            isAlertActive = false;
+          }
+
+          latestTelemetry = {
+            ...latestTelemetry,
+            status: 'good',
+            severity: 0,
+            intensity: 0,
+            debouncerState: 'idle',
+            accumulatingMs: 0,
+            alertLevel: 0,
+            blurPx: 0,
+            alertMessage: '',
+            blinksPerMinute: null,
+            trackingStatus: 'lost',
+            monitoringStatus: 'suspended',
+            suspensionReason: 'edge_unfocused',
+            sequenceNumber,
+            timestamp: Date.now()
+          };
+
+          notifyMonitorLifecycle('SUSPEND');
+          persistTelemetrySnapshot();
+        }
+      } catch {}
+    }, 500);
   }
 }
 
@@ -763,6 +891,16 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
       return false;
     }
 
+    case 'TAB_VISIBILITY_CHANGE': {
+      // Process native window occlusion events from active tabs
+      const isSenderActive = _sender.tab?.active ?? true;
+      if (!isSenderActive) {
+        return false;
+      }
+      handleActiveTabVisibilityChange(_sender.tab?.id, msg.visibilityState === 'visible');
+      return false;
+    }
+
     default:
       return false;
   }
@@ -770,7 +908,19 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
 
 // Tab Activated: Maintain consistent intervention state when user switches tabs
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
+  // Switching tabs in Chrome cancels any pending occlusion debounce and resets native cover
+  if (focusDebounceTimeout !== null) {
+    clearTimeout(focusDebounceTimeout);
+    focusDebounceTimeout = null;
+  }
+  isOccludedDueToNativeCover = false;
+
   if (!settings.monitoringActive) return;
+
+  // Immediately query tab visibility to verify if the newly activated tab is visible
+  if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.sendMessage) {
+    chrome.tabs.sendMessage(activeInfo.tabId, { type: 'QUERY_TAB_VISIBILITY' }).catch(() => {});
+  }
 
   try {
     const tab = await chrome.tabs.get(activeInfo.tabId);

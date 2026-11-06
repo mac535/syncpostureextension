@@ -469,3 +469,131 @@ test('Browser Lifecycle: Service worker cold start recovers settings before focu
   assert.equal(isSuspendedDueToFocus, false, 'Suspended flag cleared upon resume');
   assert.equal(resumedCalled, true, 'Resume lifecycle notification dispatches correctly');
 });
+
+// 12. Native Window Occlusion: Another browser (e.g. Edge) completely covers Chrome without minimizing
+test('Browser Lifecycle: Edge completely covering Chrome triggers native window occlusion and suspends camera', async () => {
+  let _isMonitoringActive = true;
+  let isSuspended = false;
+  let cameraActive = true;
+  let isOccludedDueToNativeCover = false;
+  let debounceTimer = null;
+
+  function handleTabVisibilityChange(tabActive, visibilityState) {
+    if (!tabActive) return; // Inactive tabs do not represent window occlusion
+
+    if (visibilityState === 'hidden') {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        isOccludedDueToNativeCover = true;
+        isSuspended = true;
+        cameraActive = false; // camera tracks released
+      }, 50);
+    } else {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      isOccludedDueToNativeCover = false;
+      isSuspended = false;
+      cameraActive = true;
+    }
+  }
+
+  // Edge opens and completely covers Chrome (Chrome window not minimized, but 100% occluded)
+  // Chromium's NativeWindowOcclusionTracker sets the active tab visibility to 'hidden'
+  handleTabVisibilityChange(true, 'hidden');
+
+  // Before debounce completes
+  assert.equal(isSuspended, false, 'Should debounce before suspending');
+
+  // Await debounce
+  await new Promise((r) => setTimeout(r, 60));
+
+  assert.equal(isOccludedDueToNativeCover, true, 'Window is marked occluded by external native application');
+  assert.equal(isSuspended, true, 'Monitoring must suspend when Chrome is completely covered');
+  assert.equal(cameraActive, false, 'Camera tracks released and inference paused');
+});
+
+// 13. Native Window Occlusion Recovery: Uncovering Chrome automatically resumes camera and inference
+test('Browser Lifecycle: Uncovering Chrome from behind Edge resumes camera automatically', async () => {
+  let _isMonitoringActive = true;
+  let isSuspended = true;
+  let cameraActive = false;
+  let isOccludedDueToNativeCover = true;
+  let debounceTimer = null;
+
+  function handleTabVisibilityChange(tabActive, visibilityState) {
+    if (!tabActive) return;
+
+    if (visibilityState === 'visible') {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      isOccludedDueToNativeCover = false;
+      isSuspended = false;
+      cameraActive = true; // camera reacquired automatically
+    }
+  }
+
+  // Edge is moved away, minimized, or closed so Chrome is visible again.
+  // Active tab visibility transitions from 'hidden' to 'visible'.
+  handleTabVisibilityChange(true, 'visible');
+
+  assert.equal(isOccludedDueToNativeCover, false, 'Native occlusion flag cleared');
+  assert.equal(isSuspended, false, 'Monitoring resumed');
+  assert.equal(cameraActive, true, 'Camera capture resumed without manual intervention');
+});
+
+// 14. Partial Visibility & Split-Screen: When Chrome is partially visible behind another app, camera stays ON
+test('Browser Lifecycle: Side-by-side or partial visibility keeps active tab visible and camera ON', () => {
+  let _isMonitoringActive = true;
+  let isSuspended = false;
+  let cameraActive = true;
+
+  function handleTabVisibilityChange(tabActive, visibilityState) {
+    if (!tabActive) return;
+    if (visibilityState === 'visible') {
+      isSuspended = false;
+      cameraActive = true;
+    } else {
+      isSuspended = true;
+      cameraActive = false;
+    }
+  }
+
+  // In split-screen / side-by-side mode with Edge/WhatsApp, or partial overlap,
+  // Chromium's NativeWindowOcclusionTracker keeps active tab visibilityState as 'visible'
+  handleTabVisibilityChange(true, 'visible');
+
+  assert.equal(isSuspended, false, 'Monitoring remains active in split screen / partial overlap');
+  assert.equal(cameraActive, true, 'Camera remains ON while Chrome is visible');
+});
+
+// 15. Tab switching within Chrome cancels pending occlusion debounce
+test('Browser Lifecycle: Switching tabs in Chrome cancels occlusion debounce and maintains continuous monitoring', async () => {
+  let isSuspended = false;
+  let cameraActive = true;
+  let debounceTimer = null;
+
+  function handleActiveTabHidden() {
+    debounceTimer = setTimeout(() => {
+      isSuspended = true;
+      cameraActive = false;
+    }, 50);
+  }
+
+  function handleTabActivated() {
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
+  }
+
+  // Active tab A goes hidden because user clicked Tab B
+  handleActiveTabHidden();
+
+  // Tab B activated event fires immediately (within 10ms)
+  await new Promise((r) => setTimeout(r, 10));
+  handleTabActivated();
+
+  // Wait past original debounce time (60ms)
+  await new Promise((r) => setTimeout(r, 60));
+
+  assert.equal(isSuspended, false, 'Tab switching must NOT trigger camera suspension');
+  assert.equal(cameraActive, true, 'Camera must remain active when switching tabs');
+});

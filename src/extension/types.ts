@@ -156,4 +156,10 @@ export type ExtensionMessage =
   | { type: 'TRIGGER_CALIBRATION' }
   | { type: 'TRIGGER_CALIBRATION_FROM_POPUP' }
   | { type: 'CALIBRATION_COMPLETED'; baseline: PostureBaseline }
-  | { type: 'OPEN_MONITOR_PAGE' };
+  | { type: 'OPEN_MONITOR_PAGE' }
+  | {
+      type: 'TAB_VISIBILITY_CHANGE';
+      visibilityState: 'visible' | 'hidden';
+      timestamp?: number;
+    }
+  | { type: 'QUERY_TAB_VISIBILITY' };

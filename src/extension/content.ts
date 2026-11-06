@@ -573,6 +573,16 @@
       case 'MONITORING_STOPPED':
         clearAllInterventions();
         break;
+
+      case 'QUERY_TAB_VISIBILITY':
+        try {
+          chrome.runtime.sendMessage({
+            type: 'TAB_VISIBILITY_CHANGE',
+            visibilityState: document.visibilityState,
+            timestamp: Date.now()
+          }).catch(() => {});
+        } catch {}
+        break;
     }
   });
 
@@ -599,6 +609,20 @@
       }
     });
   } catch {}
+
+  // Native window occlusion tracking:
+  // When another application (Edge, WhatsApp, etc.) completely covers Chrome on Windows,
+  // Chromium's NativeWindowOcclusionTracker sets document.visibilityState to 'hidden'.
+  // When uncovered, it returns to 'visible'.
+  document.addEventListener('visibilitychange', () => {
+    try {
+      chrome.runtime.sendMessage({
+        type: 'TAB_VISIBILITY_CHANGE',
+        visibilityState: document.visibilityState,
+        timestamp: Date.now()
+      }).catch(() => {});
+    } catch {}
+  });
 
   window.addEventListener('beforeunload', () => {
     clearAllInterventions();
